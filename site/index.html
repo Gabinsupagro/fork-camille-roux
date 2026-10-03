@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>C'est encore loin ? · Montpellier</title>
+    <meta
+      name="description"
+      content="Carte interactive des temps de trajet en tram (et bus) à Montpellier : choisissez un départ, la carte se colore selon le temps qu'il faut pour aller partout ailleurs."
+    />
+    <link rel="preconnect" href="https://fonts.bunny.net" />
+    <link rel="stylesheet" href="https://fonts.bunny.net/css?family=inter:400,500,600,700,800" />
+    <link rel="stylesheet" href="./styles.css?v=4" />
+  </head>
+  <body>
+    <header class="topbar">
+      <nav class="topbar-inner">
+        <a class="brand" href="./">
+          C'est encore loin ?
+        </a>
+        <a class="topbar-link" href="https://www.camilleroux.com/" rel="noopener">camilleroux.com</a>
+      </nav>
+    </header>
+
+    <main class="page">
+      <section class="hero">
+        <span class="chip">📍 Montpellier, France</span>
+        <h1>C'est encore loin&nbsp;?</h1>
+        <p class="lede">
+          La ville redessinée par le temps qu'il faut pour y aller en tram. Choisissez un départ&nbsp;: la carte se colore
+          selon le temps de trajet vers chaque point de la Métropole.
+        </p>
+        <form id="searchForm" class="search" role="search" autocomplete="off">
+          <label class="visually-hidden" for="searchInput">Adresse de départ</label>
+          <input id="searchInput" type="search" placeholder="Partir d'une adresse… (ex. Gare Saint-Roch)" />
+          <button type="submit" class="button primary">Partir d'ici</button>
+          <ul id="searchResults" class="search-results" hidden></ul>
+        </form>
+      </section>
+
+      <section class="map-card" aria-label="Carte des temps de trajet">
+        <div id="mapStage" class="map-stage">
+          <canvas id="mapCanvas"></canvas>
+
+          <aside id="tripPanel" class="trip-panel" aria-live="polite">
+            <p class="trip-eyebrow">Départ</p>
+            <p id="tripFrom" class="trip-from">Chargement du réseau…</p>
+            <div id="tripResult" class="trip-result" hidden>
+              <div class="trip-row">
+                <p class="trip-eyebrow">Arrivée</p>
+                <button id="removeTo" type="button" class="link-button">Retirer</button>
+              </div>
+              <p id="tripTo" class="trip-to"></p>
+              <p id="tripDuration" class="trip-duration"></p>
+              <ol id="tripSteps" class="trip-steps"></ol>
+              <div id="heatFrom" class="segmented" role="group" aria-label="Point d'où part la carte">
+                <span>Carte depuis</span>
+                <button type="button" data-source="from" aria-pressed="true">le départ</button>
+                <button type="button" data-source="to" aria-pressed="false">l'arrivée</button>
+              </div>
+            </div>
+            <p id="tripHint" class="trip-hint">Cliquez sur la carte pour poser une arrivée.</p>
+          </aside>
+
+          <div class="map-buttons">
+            <button id="zoomIn" type="button" class="icon-button" aria-label="Zoomer">+</button>
+            <button id="zoomOut" type="button" class="icon-button" aria-label="Dézoomer">−</button>
+            <button id="recenter" type="button" class="icon-button" aria-label="Recentrer la carte">⌖</button>
+            <button id="fullscreen" type="button" class="icon-button" aria-label="Plein écran">⤢</button>
+          </div>
+
+          <div class="legend" aria-hidden="true">
+            <div id="legendBar" class="legend-bar"></div>
+            <div class="legend-labels"><span>0</span><span id="legendMid"></span><span id="legendMax"></span></div>
+          </div>
+        </div>
+
+        <div class="controls">
+          <div class="control-group">
+            <span class="control-label">Réseau</span>
+            <label class="pill-toggle"><input type="checkbox" checked disabled /> Tram</label>
+            <label class="pill-toggle"><input id="busToggle" type="checkbox" /> Bus</label>
+          </div>
+          <div id="isoToggles" class="control-group">
+            <span class="control-label">Isochrones</span>
+            <label class="pill-toggle"><input type="checkbox" value="15" checked /> 15 min</label>
+            <label class="pill-toggle"><input type="checkbox" value="30" checked /> 30 min</label>
+            <label class="pill-toggle"><input type="checkbox" value="45" /> 45 min</label>
+            <label class="pill-toggle"><input type="checkbox" value="60" /> 60 min</label>
+          </div>
+          <div class="control-group">
+            <label class="control-label" for="maxRange">Échelle</label>
+            <input id="maxRange" type="range" min="20" max="90" step="5" value="45" />
+            <output id="maxValue" for="maxRange">45 min</output>
+          </div>
+          <div class="control-group actions">
+            <button id="locate" type="button" class="button">Ma position</button>
+            <button id="swap" type="button" class="button">Inverser</button>
+            <button id="share" type="button" class="button primary">Partager</button>
+          </div>
+        </div>
+        <p id="reach" class="reach"></p>
+      </section>
+
+      <section class="notes">
+        <h2>Comment c'est calculé</h2>
+        <p>
+          Les temps viennent des horaires théoriques du réseau TaM pour un jour de semaine ordinaire, entre 7&nbsp;h et
+          20&nbsp;h&nbsp;: durée prévue entre chaque arrêt, attente égale à la moitié de l'intervalle entre deux passages,
+          marche à pied jusqu'à l'arrêt et pénalité de correspondance. Le bus est proposé en option. Pas de temps réel ni
+          de perturbations&nbsp;: c'est une carte de la ville «&nbsp;sur le papier&nbsp;».
+        </p>
+        <p>
+          Glissez le marqueur vert pour changer de départ, cliquez n'importe où pour poser une arrivée (glissez-la pour centrer la carte sur elle, double-cliquez pour la retirer), faites glisser la
+          carte pour la déplacer et utilisez la molette pour zoomer.
+        </p>
+        <h2>Crédits</h2>
+        <p>
+          Idée originale&nbsp;: le <a href="https://castrio.me/nyc/">NYC Transit Time Cartogram</a> d'Anthony Castrio,
+          adapté ensuite à Paris par Jules Grandin
+          (<a href="https://julesgrandin.github.io/paris-temps-transport/">C'est encore loin&nbsp;?</a>). Cette version
+          montpelliéraine est réalisée par <a href="https://www.camilleroux.com/">Camille Roux</a>.
+        </p>
+        <p>
+          Données&nbsp;: <a href="https://transport.data.gouv.fr/datasets/reseau-urbain-tam">GTFS TaM</a>
+          (Montpellier Méditerranée Métropole), tracés et étangs ©
+          <a href="https://www.openstreetmap.org/copyright">contributeurs OpenStreetMap</a>,
+          <a href="https://geo.api.gouv.fr/">contours communaux</a>, recherche d'adresse via la
+          <a href="https://adresse.data.gouv.fr/">Base Adresse Nationale</a>.
+        </p>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" hidden></div>
+    <script type="module" src="./app.js?v=4"></script>
+  </body>
+</html>
