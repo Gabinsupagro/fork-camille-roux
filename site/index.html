@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Montpellier à portée de tram</title>
+    <title>Montpellier à portée de tram · Temps de trajet en tram TaM</title>
     <meta
       name="description"
-      content="Carte interactive des temps de trajet en tram (et bus) à Montpellier : choisissez un départ, la carte se colore selon le temps qu'il faut pour aller partout ailleurs."
+      content="Carte des temps de trajet en tram à Montpellier : choisissez un départ, toute la Métropole se colore selon le temps qu'il faut pour y aller (réseau TaM)."
     />
     <link rel="canonical" href="https://camilleroux.github.io/montpellier-temps-transport/" />
     <meta name="theme-color" content="#3aa70b" />
@@ -29,9 +29,37 @@
     <meta name="twitter:description" content="Montpellier redessiné par le temps de trajet en tram : choisissez un départ, la carte se colore selon le temps qu'il faut pour aller partout ailleurs." />
     <meta name="twitter:image" content="https://camilleroux.github.io/montpellier-temps-transport/og-image.jpg?v=2" />
 
+    <script type="application/ld+json">
+{
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "Montpellier à portée de tram",
+      "url": "https://camilleroux.github.io/montpellier-temps-transport/",
+      "description": "Carte des temps de trajet en tram à Montpellier : choisissez un départ, toute la Métropole se colore selon le temps qu'il faut pour y aller (réseau TaM).",
+      "inLanguage": "fr",
+      "applicationCategory": "TravelApplication",
+      "operatingSystem": "Web",
+      "isAccessibleForFree": true,
+      "image": "https://camilleroux.github.io/montpellier-temps-transport/og-image.jpg?v=2",
+      "author": {
+        "@type": "Person",
+        "name": "Camille Roux",
+        "url": "https://www.camilleroux.com/"
+      },
+      "spatialCoverage": {
+        "@type": "Place",
+        "name": "Montpellier Méditerranée Métropole"
+      },
+      "isBasedOn": [
+        "https://castrio.me/nyc/",
+        "https://julesgrandin.github.io/paris-temps-transport/"
+      ]
+    }
+    </script>
+
     <link rel="preconnect" href="https://fonts.bunny.net" />
     <link rel="stylesheet" href="https://fonts.bunny.net/css?family=inter:400,500,600,700,800" />
-    <link rel="stylesheet" href="./styles.css?v=5" />
+    <link rel="stylesheet" href="./styles.css?v=6" />
   </head>
   <body>
     <header class="topbar">
@@ -60,6 +88,11 @@
       </section>
 
       <section class="map-card" aria-label="Carte des temps de trajet">
+        <noscript>
+          <p class="noscript">
+            Cette carte interactive a besoin de JavaScript pour calculer les temps de trajet. Activez-le pour l'utiliser.
+          </p>
+        </noscript>
         <div id="mapStage" class="map-stage">
           <canvas id="mapCanvas"></canvas>
 
@@ -153,6 +186,6 @@
     </main>
 
     <div id="toast" class="toast" role="status" hidden></div>
-    <script type="module" src="./app.js?v=5"></script>
+    <script type="module" src="./app.js?v=6"></script>
   </body>
 </html>

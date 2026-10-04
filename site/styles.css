@@ -271,6 +271,14 @@ h1 {
   cursor: grab;
 }
 
+.noscript {
+  margin: 0;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--green-soft);
+  font-weight: 500;
+}
+
 .trip-panel {
   position: absolute;
   top: 14px;
