@@ -1,4 +1,4 @@
-// C'est encore loin ? — Montpellier
+// Montpellier à portée de tram
 // Carte des temps de trajet en tram (et bus) sur le réseau TaM.
 
 const DATA_URL = new URL("./data/commute_map_data.json?v=4", import.meta.url);
