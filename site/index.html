@@ -8,6 +8,10 @@
       name="description"
       content="Carte des temps de trajet en tram à Montpellier : choisissez un départ, toute la Métropole se colore selon le temps qu'il faut pour y aller (réseau TaM)."
     />
+    <script>
+      // Anciens liens github.io : on renvoie vers le domaine du site en gardant départ et arrivée.
+      if (location.hostname.endsWith("github.io")) location.replace("https://tram.camilleroux.com/" + location.search);
+    </script>
     <link rel="canonical" href="https://tram.camilleroux.com/" />
     <meta name="theme-color" content="#3aa70b" />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
