@@ -246,17 +246,20 @@ def parse_time(value: str) -> int:
 
 
 def pick_reference_date(calendar_dates: Sequence[dict]) -> str:
-    """Busiest Tuesday or Thursday of the feed: a plain school-term weekday."""
-    counts: Counter[str] = Counter()
+    """A plain school-term Tuesday or Thursday: the most common set of services among those days.
+
+    Picking the busiest day instead would favour holidays with works and substitution buses.
+    """
+    services: Dict[str, set] = defaultdict(set)
     for row in calendar_dates:
         if row["exception_type"] == "1":
-            counts[row["date"]] += 1
-    weekdays = [
-        day
-        for day in counts
-        if date(int(day[:4]), int(day[4:6]), int(day[6:])).weekday() in (1, 3)
-    ]
-    return max(sorted(weekdays), key=lambda day: counts[day])
+            services[row["date"]].add(row["service_id"])
+    weekdays = sorted(
+        day for day in services if date(int(day[:4]), int(day[4:6]), int(day[6:])).weekday() in (1, 3)
+    )
+    signatures = Counter(frozenset(services[day]) for day in weekdays)
+    typical = signatures.most_common(1)[0][0]
+    return next(day for day in weekdays if frozenset(services[day]) == typical)
 
 
 def normalize_name(name: str) -> str:

@@ -1,7 +1,7 @@
 // Montpellier à portée de tram
 // Carte des temps de trajet en tram (et bus) sur le réseau TaM.
 
-const DATA_URL = new URL("./data/commute_map_data.json?v=4", import.meta.url);
+const DATA_URL = new URL("./data/commute_map_data.json?v=5", import.meta.url);
 const GEOCODER_URL = "https://api-adresse.data.gouv.fr/search/";
 
 const DEFAULT_FROM = { lat: 43.60853, lon: 3.8799, label: "Place de la Comédie" };
