@@ -27,6 +27,7 @@ Puis ouvrir [http://localhost:8000](http://localhost:8000).
 - Tracés des lignes de tram, étangs et parcs : © contributeurs OpenStreetMap (ODbL), via Overpass
 - Contours des 31 communes de Montpellier Méditerranée Métropole ([geo.api.gouv.fr](https://geo.api.gouv.fr/))
 - Recherche d'adresse côté navigateur : [api-adresse.data.gouv.fr](https://adresse.data.gouv.fr/)
+- Mesure d'audience : Cloudflare Web Analytics (sans cookie)
 
 ## Modèle
 
