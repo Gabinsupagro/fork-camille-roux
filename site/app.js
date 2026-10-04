@@ -10,8 +10,9 @@ const ISOCHRONE_OPTIONS = [15, 30, 45, 60];
 const DEFAULT_ISOCHRONES = [15, 30];
 const REACH_MINUTES = 30;
 const SEED_STATIONS = 8;
-const MARKER_HIT_RADIUS = 18;
-const CLICK_SLOP = 5;
+// Au doigt, on vise moins précisément et un tap bouge souvent de quelques pixels.
+const MARKER_HIT_RADIUS = { mouse: 18, touch: 30 };
+const CLICK_SLOP = { mouse: 5, touch: 12 };
 const MIN_ZOOM_FACTOR = 0.5;
 const MAX_ZOOM_FACTOR = 14;
 const STOP_LABEL_SCALE = 0.13; // pixels par mètre au-delà desquels on nomme les arrêts
@@ -984,9 +985,13 @@ function eventPoint(event) {
   return [event.clientX - rect.left, event.clientY - rect.top];
 }
 
-function markerAt(screen) {
+function pointerKind(event) {
+  return event.pointerType === "mouse" ? "mouse" : "touch";
+}
+
+function markerAt(screen, kind = "mouse") {
   for (const key of ["to", "from"]) {
-    if (app[key] && hypot(screen, project(app[key].point)) <= MARKER_HIT_RADIUS) return key;
+    if (app[key] && hypot(screen, project(app[key].point)) <= MARKER_HIT_RADIUS[kind]) return key;
   }
   return null;
 }
@@ -1000,10 +1005,11 @@ canvas.addEventListener("pointerdown", (event) => {
     app.drag = { kind: "pinch", distance: hypot(a, b) };
     return;
   }
-  const marker = markerAt(screen);
+  const pointer = pointerKind(event);
+  const marker = markerAt(screen, pointer);
   app.drag = marker
     ? { kind: "marker", marker, start: screen }
-    : { kind: "pan", start: screen, last: screen, moved: false };
+    : { kind: "pan", start: screen, last: screen, moved: false, slop: CLICK_SLOP[pointer] };
   // Saisir un marqueur recentre la heatmap sur lui, comme sur la version parisienne.
   if (marker && marker !== app.heatFrom) setHeatFrom(marker);
 });
@@ -1027,7 +1033,7 @@ canvas.addEventListener("pointermove", (event) => {
     if (drag.marker === "from") setFrom(world, null, { quiet: true, fast: true });
     else setTo(world, null, { quiet: true, fast: true });
   } else if (drag.kind === "pan") {
-    if (!drag.moved && hypot(screen, drag.start) < CLICK_SLOP) return;
+    if (!drag.moved && hypot(screen, drag.start) < drag.slop) return;
     drag.moved = true;
     canvas.classList.add("panning");
     app.view.cx -= (screen[0] - drag.last[0]) / app.view.scale;
@@ -1080,6 +1086,8 @@ $("recenter").addEventListener("click", () => {
   fitView();
   requestRender();
 });
+// L'iPhone ne sait pas passer un élément de page en plein écran : on masque le bouton.
+$("fullscreen").hidden = !document.fullscreenEnabled;
 $("fullscreen").addEventListener("click", () => {
   if (document.fullscreenElement) document.exitFullscreen();
   else stage.requestFullscreen?.();

@@ -231,6 +231,10 @@ h1 {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
+.icon-button[hidden] {
+  display: none;
+}
+
 .icon-button:hover {
   background: var(--surface-alt);
 }
@@ -567,6 +571,21 @@ output {
 }
 
 @media (max-width: 720px) {
+  /* Sur mobile, la barre défile avec la page pour ne pas masquer le haut de la carte. */
+  .topbar {
+    position: static;
+  }
+
+  .topbar-inner {
+    padding: 10px 14px;
+  }
+
+  .brand,
+  .topbar-link {
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+
   .hero {
     padding-top: 24px;
   }
