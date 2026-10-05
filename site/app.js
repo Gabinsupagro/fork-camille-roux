@@ -1,7 +1,7 @@
 // Montpellier à portée de tram
 // Carte des temps de trajet en tram (et bus) sur le réseau TaM.
 
-import { createBasemap, DEFAULT_PROVIDER, PROVIDERS } from "./basemap.js?v=1";
+import { createBasemap, DEFAULT_PROVIDER, PROVIDERS } from "./basemap.js?v=2";
 
 const DATA_URL = new URL("./data/commute_map_data.json?v=5", import.meta.url);
 const GEOCODER_URL = "https://api-adresse.data.gouv.fr/search/";

@@ -10,7 +10,7 @@ const TILE_SIZE = 256;
 const EARTH_CIRCUMFERENCE = 40075016.686; // mètres, à l'équateur
 const MAX_CACHED_TILES = 400;
 const RETRY_AFTER_MS = 15000;
-const MAX_TILES_PER_LAYER = 80;
+const MAX_TILES_PER_LAYER = 200;
 const MAX_FALLBACK_LEVELS = 3;
 
 // "base" se dessine sous la heatmap, "labels" (noms de rues, de quartiers) par-dessus.
@@ -18,6 +18,7 @@ const MAX_FALLBACK_LEVELS = 3;
 export const PROVIDERS = {
   carto: {
     // Fond de style Voyager (données OpenStreetMap, rendu CARTO), noms séparés pour rester lisibles.
+    // ATTENTION : CARTO exige désormais une clé d'API, sans elle les tuiles affichent « API key required ».
     base: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png",
     labels: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png",
     subdomains: "abcd",
@@ -27,8 +28,9 @@ export const PROVIDERS = {
     attribution: "© OpenStreetMap · © CARTO",
   },
   osm: {
-    // Serveur de tuiles officiel d'OpenStreetMap : style standard, mais usage limité par leur politique
-    // (https://operations.osmfoundation.org/policies/tiles/). À réserver aux essais.
+    // Serveur de tuiles officiel d'OpenStreetMap : style standard, sans clé. Usage raisonnable seulement
+    // (https://operations.osmfoundation.org/policies/tiles/) : pour un site très fréquenté, prévoir un
+    // fournisseur dédié ou ses propres tuiles.
     base: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
     labels: null,
     subdomains: "",
@@ -39,7 +41,7 @@ export const PROVIDERS = {
   },
 };
 
-export const DEFAULT_PROVIDER = "carto";
+export const DEFAULT_PROVIDER = "osm";
 
 const toRadians = (degrees) => (degrees * Math.PI) / 180;
 const toDegrees = (radians) => (radians * 180) / Math.PI;
@@ -144,7 +146,8 @@ export function createBasemap({ provider = DEFAULT_PROVIDER, lat0, toWorld, toLa
     if (!config[layer]) return 0;
     const { project, unproject, width, height, dpr, scale } = view;
     const retina = dpr >= 1.5;
-    const z = zoomFor(scale);
+    // Fournisseur sans tuiles @2x sur écran haute densité : un niveau de zoom de plus pour rester net.
+    const z = zoomFor(retina && !config.retina ? scale * 2 : scale);
     const n = 2 ** z;
 
     const topLeft = toLatLon(unproject(0, 0));
