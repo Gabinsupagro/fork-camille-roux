@@ -8,7 +8,8 @@ const GEOCODER_URL = "https://api-adresse.data.gouv.fr/search/";
 
 const DEFAULT_FROM = { lat: 43.60853, lon: 3.8799, label: "Place de la Comédie" };
 const DEFAULT_MAX = 45;
-const ISOCHRONE_OPTIONS = [15, 30, 45, 60];
+const MIN_MAX = 5; // borne basse du curseur « Échelle » (doit correspondre au min de #maxRange)
+const ISOCHRONE_OPTIONS = [5, 10, 15, 30, 45, 60];
 const DEFAULT_ISOCHRONES = [15, 30];
 const REACH_MINUTES = 30;
 const SEED_STATIONS = 8;
@@ -1011,7 +1012,7 @@ function restoreFromUrl() {
   app.includeBus = params.get("bus") === "1";
   $("busToggle").checked = app.includeBus;
   const max = Number(params.get("max"));
-  if (max >= 20 && max <= 90) app.maxMinutes = max;
+  if (max >= MIN_MAX && max <= 90) app.maxMinutes = max;
   $("maxRange").value = String(app.maxMinutes);
   if (params.has("iso")) {
     app.isochrones = params

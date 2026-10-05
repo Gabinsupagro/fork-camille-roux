@@ -145,6 +145,8 @@
           </div>
           <div id="isoToggles" class="control-group">
             <span class="control-label">Isochrones</span>
+            <label class="pill-toggle"><input type="checkbox" value="5" /> 5 min</label>
+            <label class="pill-toggle"><input type="checkbox" value="10" /> 10 min</label>
             <label class="pill-toggle"><input type="checkbox" value="15" checked /> 15 min</label>
             <label class="pill-toggle"><input type="checkbox" value="30" checked /> 30 min</label>
             <label class="pill-toggle"><input type="checkbox" value="45" /> 45 min</label>
@@ -152,7 +154,7 @@
           </div>
           <div class="control-group">
             <label class="control-label" for="maxRange">Échelle</label>
-            <input id="maxRange" type="range" min="20" max="90" step="5" value="45" />
+            <input id="maxRange" type="range" min="5" max="90" step="5" value="45" />
             <output id="maxValue" for="maxRange">45 min</output>
           </div>
           <div class="control-group">
@@ -202,7 +204,7 @@
     </main>
 
     <div id="toast" class="toast" role="status" hidden></div>
-    <script type="module" src="./app.js?v=10"></script>
+    <script type="module" src="./app.js?v=11"></script>
     <!-- Cloudflare Web Analytics (sans cookie). "spa": false : les mises à jour de l'URL ne comptent pas comme des pages vues. -->
     <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "1904c17ed0624c0cab4d69ea1bacc5e7", "spa": false}'></script>
   </body>
