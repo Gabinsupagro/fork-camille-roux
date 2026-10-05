@@ -9,7 +9,8 @@ Idée originale : le [NYC Transit Time Cartogram](https://castrio.me/nyc/) d'Ant
 
 Fonctionnalités : heatmap et isochrones depuis un départ déplaçable, arrivée au clic avec itinéraire détaillé
 (lignes, correspondances, marche), recherche d'adresse (Base Adresse Nationale) ou de station, tram seul ou
-tram + bus, déplacement et zoom de la carte, lien de partage.
+tram + bus, déplacement et zoom de la carte, lien de partage, fond de carte OpenStreetMap (désactivable, avec
+opacité des couleurs réglable).
 
 ## Lancer
 
@@ -26,6 +27,9 @@ Puis ouvrir [http://localhost:8000](http://localhost:8000).
 - GTFS théorique du réseau TaM ([transport.data.gouv.fr](https://transport.data.gouv.fr/datasets/reseau-urbain-tam))
 - Tracés des lignes de tram, étangs et parcs : © contributeurs OpenStreetMap (ODbL), via Overpass
 - Contours des 31 communes de Montpellier Méditerranée Métropole ([geo.api.gouv.fr](https://geo.api.gouv.fr/))
+- Fond de carte : © contributeurs OpenStreetMap, tuiles CARTO Voyager (`basemaps.cartocdn.com`), reprojetées dans
+  le repère local du site (voir `site/basemap.js`). Paramètres d'URL : `fond=0` (sans fond), `fond=osm` (serveur
+  de tuiles officiel d'OpenStreetMap, à réserver aux essais), `opacite=20..100`
 - Recherche d'adresse côté navigateur : [api-adresse.data.gouv.fr](https://adresse.data.gouv.fr/)
 - Mesure d'audience : Cloudflare Web Analytics (sans cookie)
 

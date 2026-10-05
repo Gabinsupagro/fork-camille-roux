@@ -155,6 +155,13 @@
             <input id="maxRange" type="range" min="20" max="90" step="5" value="45" />
             <output id="maxValue" for="maxRange">45 min</output>
           </div>
+          <div class="control-group">
+            <span class="control-label">Affichage</span>
+            <label class="pill-toggle"><input id="basemapToggle" type="checkbox" checked /> Fond de carte</label>
+            <label class="control-label" for="heatOpacity">Couleurs</label>
+            <input id="heatOpacity" type="range" min="20" max="100" step="5" value="60" />
+            <output id="heatOpacityValue" for="heatOpacity">60 %</output>
+          </div>
           <div class="control-group actions">
             <button id="locate" type="button" class="button">Ma position</button>
             <button id="swap" type="button" class="button">Inverser</button>
@@ -188,13 +195,15 @@
           (Montpellier Méditerranée Métropole), tracés et étangs ©
           <a href="https://www.openstreetmap.org/copyright">contributeurs OpenStreetMap</a>,
           <a href="https://geo.api.gouv.fr/">contours communaux</a>, recherche d'adresse via la
-          <a href="https://adresse.data.gouv.fr/">Base Adresse Nationale</a>.
+          <a href="https://adresse.data.gouv.fr/">Base Adresse Nationale</a>. Fond de carte&nbsp;: ©
+          <a href="https://www.openstreetmap.org/copyright">contributeurs OpenStreetMap</a>, rendu
+          <a href="https://carto.com/attributions">© CARTO</a>.
         </p>
       </section>
     </main>
 
     <div id="toast" class="toast" role="status" hidden></div>
-    <script type="module" src="./app.js?v=8"></script>
+    <script type="module" src="./app.js?v=9"></script>
     <!-- Cloudflare Web Analytics (sans cookie). "spa": false : les mises à jour de l'URL ne comptent pas comme des pages vues. -->
     <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "1904c17ed0624c0cab4d69ea1bacc5e7", "spa": false}'></script>
   </body>

@@ -1,6 +1,8 @@
 // Montpellier à portée de tram
 // Carte des temps de trajet en tram (et bus) sur le réseau TaM.
 
+import { createBasemap, DEFAULT_PROVIDER, PROVIDERS } from "./basemap.js?v=1";
+
 const DATA_URL = new URL("./data/commute_map_data.json?v=5", import.meta.url);
 const GEOCODER_URL = "https://api-adresse.data.gouv.fr/search/";
 
@@ -28,6 +30,8 @@ const PALETTE = [
 // Au-delà du max, la couleur s'efface progressivement jusqu'à laisser voir le fond.
 const BEYOND_FADE = 0.15;
 const HEAT_ALPHA = 0.78;
+// Sur un vrai fond de carte, la heatmap est plus transparente pour laisser voir les rues.
+const HEAT_ALPHA_BASEMAP = 0.6;
 const HEAT_UPSAMPLE = 3;
 const LUT_SIZE = 512;
 const NEIGHBOURS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
@@ -38,6 +42,7 @@ const COLORS = {
   water: "#bcd7e8",
   park: "rgba(120, 180, 90, 0.18)",
   communeLine: "rgba(255, 255, 255, 0.9)",
+  communeLineOnBasemap: "rgba(70, 70, 70, 0.45)",
   contour: "#111111",
   from: "#3aa70b",
   to: "#111111",
@@ -65,6 +70,10 @@ const app = {
   heatSolution: null, // plus courts chemins depuis le point d'où part la heatmap
   grid: null,
   heatCanvas: document.createElement("canvas"),
+  basemap: null, // couche de tuiles, créée une fois les données chargées
+  provider: DEFAULT_PROVIDER,
+  showBasemap: true,
+  heatOpacity: null, // null = valeur automatique selon la présence du fond de carte
   drag: null,
   pointers: new Map(),
   frameRequested: false,
@@ -587,6 +596,27 @@ function drawHaloText(text, x, y, { font, color, halo = "rgba(255,255,255,0.92)"
   ctx.fillText(text, x, y);
 }
 
+function heatAlpha() {
+  return app.heatOpacity ?? (app.showBasemap ? HEAT_ALPHA_BASEMAP : HEAT_ALPHA);
+}
+
+/** Dessine une couche de tuiles (le contexte doit être en coordonnées écran). */
+function drawTiles(layer) {
+  const { width, height, dpr } = app.size;
+  return app.basemap.draw(ctx, layer, { project, unproject, width, height, dpr, scale: app.view.scale });
+}
+
+function drawAttribution() {
+  ctx.textAlign = "right";
+  ctx.textBaseline = "alphabetic";
+  drawHaloText(app.basemap.attribution, app.size.width - 8, app.size.height - 7, {
+    font: "500 10px Inter, sans-serif",
+    color: "#444",
+    halo: "rgba(255,255,255,0.85)",
+    width: 3,
+  });
+}
+
 function drawIsochrones() {
   if (!app.grid || !app.isochrones.length) return;
   const px = 1 / app.view.scale;
@@ -713,16 +743,25 @@ function render() {
   ctx.fillStyle = COLORS.background;
   ctx.fillRect(0, 0, width, height);
 
+  // Le fond plat (terre grise) reste dessiné d'abord : il sert de repli tant que les tuiles arrivent,
+  // ou si elles sont bloquées.
   useWorldTransform();
   ctx.fillStyle = COLORS.land;
   ctx.fill(app.paths.land, "evenodd");
+
+  let tilesShown = false;
+  if (app.showBasemap && app.basemap) {
+    useScreenTransform();
+    tilesShown = drawTiles("base") > 0;
+    useWorldTransform();
+  }
 
   if (app.grid) {
     const [minX, minY, maxX, maxY] = app.data.meta.bounds;
     const [ox, oy] = app.offset;
     ctx.save();
     ctx.clip(app.paths.land, "evenodd");
-    ctx.globalAlpha = HEAT_ALPHA;
+    ctx.globalAlpha = heatAlpha();
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
     // L'image a sa ligne 0 au sud : avec l'axe y inversé, elle se dessine dans le bon sens.
@@ -730,13 +769,32 @@ function render() {
     ctx.restore();
   }
 
-  ctx.fillStyle = COLORS.park;
-  ctx.fill(app.paths.parks);
-  ctx.fillStyle = COLORS.water;
-  ctx.fill(app.paths.water);
-  ctx.strokeStyle = COLORS.communeLine;
+  if (tilesShown) {
+    // La carte des contours déborde sur les étangs : on y remet le fond de carte, sans couleur par-dessus.
+    ctx.save();
+    ctx.clip(app.paths.water);
+    useScreenTransform();
+    drawTiles("base");
+    ctx.restore();
+    ctx.strokeStyle = COLORS.communeLineOnBasemap;
+    ctx.setLineDash([6 * px, 4 * px]);
+  } else {
+    ctx.fillStyle = COLORS.park;
+    ctx.fill(app.paths.parks);
+    ctx.fillStyle = COLORS.water;
+    ctx.fill(app.paths.water);
+    ctx.strokeStyle = COLORS.communeLine;
+  }
   ctx.lineWidth = 1.1 * px;
   ctx.stroke(app.paths.communeLines);
+  ctx.setLineDash([]);
+
+  if (tilesShown && app.basemap.hasLabels) {
+    // Noms de rues et de quartiers par-dessus la heatmap pour rester lisibles.
+    useScreenTransform();
+    drawTiles("labels");
+    useWorldTransform();
+  }
 
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
@@ -748,13 +806,15 @@ function render() {
 
   drawIsochrones();
   useScreenTransform();
-  drawCommuneNames();
+  // Avec les noms du fond de carte, ceux des communes feraient doublon.
+  if (!(tilesShown && app.basemap.hasLabels)) drawCommuneNames();
   drawStops();
   if (app.to) {
     const minutes = app.solution ? formatMinutes(travelTo(app.solution, app.to.point).minutes) : null;
     drawMarker(app.to.point, COLORS.to, app.heatFrom === "to" ? `Arrivée · ${minutes}` : minutes);
   }
   if (app.from) drawMarker(app.from.point, COLORS.from, "Départ");
+  if (tilesShown) drawAttribution();
 }
 
 function requestRender() {
@@ -939,6 +999,9 @@ function syncUrl() {
   if (app.maxMinutes !== DEFAULT_MAX) params.set("max", String(app.maxMinutes));
   const iso = [...app.isochrones].sort((a, b) => a - b).join(",");
   if (iso !== DEFAULT_ISOCHRONES.join(",")) params.set("iso", iso || "0");
+  if (!app.showBasemap) params.set("fond", "0");
+  else if (app.provider !== DEFAULT_PROVIDER) params.set("fond", app.provider);
+  if (app.heatOpacity !== null) params.set("opacite", String(Math.round(app.heatOpacity * 100)));
   const query = params.toString().replaceAll("%2C", ",");
   history.replaceState(null, "", query ? `?${query}` : location.pathname);
 }
@@ -958,6 +1021,13 @@ function restoreFromUrl() {
       .filter((value) => ISOCHRONE_OPTIONS.includes(value));
   }
   for (const input of $("isoToggles").querySelectorAll("input")) input.checked = app.isochrones.includes(Number(input.value));
+  const background = params.get("fond");
+  app.showBasemap = background !== "0";
+  if (background in PROVIDERS) app.provider = background;
+  const opacity = Number(params.get("opacite"));
+  if (params.has("opacite") && opacity >= 20 && opacity <= 100) app.heatOpacity = opacity / 100;
+  $("basemapToggle").checked = app.showBasemap;
+  syncOpacityControl();
   updateLegend();
 
   const from = parsePair(params.get("from"));
@@ -1109,6 +1179,26 @@ $("maxRange").addEventListener("input", (event) => {
   app.maxMinutes = Number(event.target.value);
   updateLegend();
   if (app.grid) paintHeat(app.grid);
+  requestRender();
+  syncUrl();
+});
+
+function syncOpacityControl() {
+  const percent = Math.round(heatAlpha() * 100);
+  $("heatOpacity").value = String(percent);
+  $("heatOpacityValue").textContent = `${percent} %`;
+}
+
+$("basemapToggle").addEventListener("change", (event) => {
+  app.showBasemap = event.target.checked;
+  syncOpacityControl();
+  requestRender();
+  syncUrl();
+});
+
+$("heatOpacity").addEventListener("input", (event) => {
+  app.heatOpacity = Number(event.target.value) / 100;
+  syncOpacityControl();
   requestRender();
   syncUrl();
 });
@@ -1287,6 +1377,14 @@ async function init() {
   app.size.width = 0;
   resize();
   restoreFromUrl();
+  app.basemap = createBasemap({
+    provider: app.provider,
+    lat0: app.data.meta.lat0,
+    toWorld,
+    toLatLon,
+    onLoad: requestRender,
+  });
+  requestRender();
   new ResizeObserver(resize).observe(canvas);
 }
 
