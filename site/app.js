@@ -77,6 +77,8 @@ const app = {
   provider: DEFAULT_PROVIDER,
   showBasemap: true,
   heatOpacity: null, // null = valeur automatique selon la présence du fond de carte
+  // Résultats r5py chargés depuis des fichiers locaux : grilles par référence, points, matrice.
+  r5: { grids: new Map(), points: [], matrix: new Map(), active: null, grid: null },
   drag: null,
   pointers: new Map(),
   frameRequested: false,
@@ -482,7 +484,8 @@ function paintHeat(grid, { fast = false } = {}) {
 /** Marching squares sur les centres de cellules ; renvoie des segments en coordonnées monde. */
 function contourSegments(grid, threshold) {
   const { cols, rows, smooth } = grid;
-  const [minX, minY, maxX, maxY] = app.data.meta.bounds;
+  // Une grille r5py a sa propre emprise ; celle du site, l'emprise des données.
+  const [minX, minY, maxX, maxY] = grid.bounds ?? app.data.meta.bounds;
   const cellW = (maxX - minX) / cols;
   const cellH = (maxY - minY) / rows;
   const value = (row, col) => {
@@ -788,7 +791,7 @@ function render() {
   }
 
   if (app.grid) {
-    const [minX, minY, maxX, maxY] = app.data.meta.bounds;
+    const [minX, minY, maxX, maxY] = app.grid.bounds ?? app.data.meta.bounds;
     const [ox, oy] = app.offset;
     ctx.save();
     ctx.clip(app.paths.land, "evenodd");
@@ -840,8 +843,13 @@ function render() {
   // Avec les noms du fond de carte, ceux des communes feraient doublon.
   if (!(tilesShown && app.basemap.hasLabels)) drawCommuneNames();
   drawStops();
+  drawR5Points();
   if (app.to) {
-    const minutes = app.solution ? formatMinutes(travelTo(app.solution, app.to.point).minutes) : null;
+    let minutes = app.solution ? formatMinutes(travelTo(app.solution, app.to.point).minutes) : null;
+    if (app.r5.active) {
+      const r5 = r5TimeAt(app.to.point);
+      minutes = r5 === null ? "> max" : formatMinutes(r5);
+    }
     drawMarker(app.to.point, COLORS.to, app.heatFrom === "to" ? `Arrivée · ${minutes}` : minutes);
   }
   if (app.from) drawMarker(app.from.point, COLORS.from, "Départ");
@@ -905,6 +913,14 @@ function heatSource() {
 }
 
 function recompute({ fast = false } = {}) {
+  if (app.r5.active) {
+    // La carte vient de la grille r5py de la référence : rien à recalculer.
+    app.grid = app.r5.grid;
+    paintHeat(app.grid, { fast });
+    updatePanel();
+    requestRender();
+    return;
+  }
   if (!app.from) return;
   app.solution = solveFrom(app.from.point);
   app.heatSolution = heatSource() === app.from ? app.solution : solveFrom(app.to.point);
@@ -916,6 +932,8 @@ function recompute({ fast = false } = {}) {
 
 function setFrom(point, label = null, { quiet = false, fast = false } = {}) {
   if (!isOnLand(point)) return false;
+  // Déplacer le départ quitte les résultats r5py, calculés pour l'adresse de référence seulement.
+  if (app.r5.active) leaveR5();
   app.from = { point, label: label || describePlace(point) };
   recompute({ fast });
   if (!quiet) syncUrl();
@@ -942,7 +960,8 @@ function removeTo() {
 }
 
 function setHeatFrom(source) {
-  app.heatFrom = source === "to" && app.to ? "to" : "from";
+  // En mode r5py, la carte part toujours de la référence (pas de grille r5py depuis un point quelconque).
+  app.heatFrom = source === "to" && app.to && !app.r5.active ? "to" : "from";
   for (const button of $("heatFrom").querySelectorAll("button")) {
     button.setAttribute("aria-pressed", String(button.dataset.source === app.heatFrom));
   }
@@ -951,6 +970,11 @@ function setHeatFrom(source) {
 
 function updatePanel() {
   $("tripFrom").textContent = app.from?.label ?? "—";
+  $("r5Info").hidden = !app.r5.active;
+  if (app.r5.active) {
+    updateR5Panel();
+    return;
+  }
   const result = $("tripResult");
   if (!app.to || !app.solution) {
     result.hidden = true;
@@ -1030,8 +1054,9 @@ function parsePair(value) {
 
 function syncUrl() {
   const params = new URLSearchParams();
-  if (app.from) params.set("from", formatPair(app.from.point));
-  if (app.to) params.set("to", formatPair(app.to.point));
+  // Résultats r5py : les adresses (confidentielles) restent hors de l'URL et de l'historique.
+  if (app.from && !app.r5.active) params.set("from", formatPair(app.from.point));
+  if (app.to && !app.r5.active) params.set("to", formatPair(app.to.point));
   if (app.to && app.heatFrom === "to") params.set("carte", "arrivee");
   if (app.includeBus) params.set("bus", "1");
   if (app.maxMinutes !== DEFAULT_MAX) params.set("max", String(app.maxMinutes));
@@ -1186,6 +1211,249 @@ canvas.addEventListener(
   { passive: false },
 );
 
+// --- Résultats r5py (fichiers locaux) -------------------------------------------
+// Les fichiers du dossier sortie/ de r5_isochrones.py sont lus par le navigateur (FileReader) : rien n'est envoyé.
+
+/** CSV écrit par pandas (séparateur « ; » ou « , », champs entre guillemets possibles) → objets. */
+function parseCsv(text) {
+  text = text.replace(/^﻿/, "");
+  const first = text.split(/\r\n|\n|\r/, 1)[0];
+  const sep = (first.match(/;/g)?.length ?? 0) >= (first.match(/,/g)?.length ?? 0) ? ";" : ",";
+  const rows = [];
+  let row = [];
+  let field = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch !== '"') field += ch;
+      else if (text[i + 1] === '"') {
+        field += '"';
+        i += 1;
+      } else quoted = false;
+    } else if (ch === '"') quoted = true;
+    else if (ch === sep) {
+      row.push(field);
+      field = "";
+    } else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i += 1;
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else field += ch;
+  }
+  if (field || row.length) rows.push([...row, field]);
+  const header = (rows.shift() ?? []).map((name) => name.trim().toLowerCase());
+  return rows
+    .filter((values) => values.some((value) => value.trim()))
+    .map((values) => Object.fromEntries(header.map((name, i) => [name, (values[i] ?? "").trim()])));
+}
+
+/** Grille r5py → grille de la carte (mêmes champs que computeGrid, plus son emprise). */
+function r5Grid(raw) {
+  const { colonnes: cols, rangs: rows, pas, origine } = raw;
+  const times = Float32Array.from(raw.minutes, (value) => (value < 0 ? NaN : value));
+  // Même enjambement des étangs que la carte (WATER_BRIDGE_CELLS cases de 200 m), à l'échelle de la grille r5py.
+  const passes = Math.max(1, Math.round((WATER_BRIDGE_CELLS * 200) / pas));
+  const bridged = fillGaps(times, cols, rows, passes);
+  return {
+    times,
+    smooth: smoothGrid(bridged, cols, rows),
+    cols,
+    rows,
+    contours: {},
+    bounds: [origine[0], origine[1], origine[0] + cols * pas, origine[1] + rows * pas],
+  };
+}
+
+/** Temps r5py (minutes) de la référence active vers un point, d'après sa grille ; null hors grille ou inaccessible. */
+function r5TimeAt(point) {
+  const raw = app.r5.grids.get(app.r5.active);
+  if (!raw) return null;
+  const col = Math.floor((point[0] - raw.origine[0]) / raw.pas);
+  const row = Math.floor((point[1] - raw.origine[1]) / raw.pas);
+  if (col < 0 || row < 0 || col >= raw.colonnes || row >= raw.rangs) return null;
+  const value = raw.minutes[row * raw.colonnes + col];
+  return value < 0 ? null : value;
+}
+
+/** Temps vers un point de la base : la matrice si elle est chargée (temps exact au point), sinon la grille. */
+function r5PointTime(point) {
+  const key = `${app.r5.active}|${point.id}`;
+  if (app.r5.matrix.has(key)) return app.r5.matrix.get(key);
+  return r5TimeAt(point.point);
+}
+
+async function loadR5Files(files) {
+  let grids = 0;
+  const notes = [];
+  for (const file of files) {
+    const text = await file.text();
+    if (file.name.toLowerCase().endsWith(".json")) {
+      let raw;
+      try {
+        raw = JSON.parse(text);
+      } catch {
+        notes.push(`${file.name} : JSON illisible`);
+        continue;
+      }
+      if (!Array.isArray(raw.minutes) || !raw.colonnes || !raw.rangs || !raw.pas || !raw.origine) {
+        notes.push(`${file.name} : pas une grille r5py`);
+        continue;
+      }
+      if (Math.abs(raw.lat0 - app.data.meta.lat0) > 1e-9) {
+        notes.push(`${file.name} : repère différent de la carte`);
+        continue;
+      }
+      app.r5.grids.set(String(raw.reference), raw);
+      grids += 1;
+      continue;
+    }
+    const rows = parseCsv(text);
+    const columns = new Set(Object.keys(rows[0] ?? {}));
+    if (columns.has("fichier") && columns.has("lat")) {
+      // geocodage.csv : les points de la base (fichier « pt ») placés par le géocodage.
+      app.r5.points = rows
+        .filter((row) => row.fichier === "pt" && row.lat && row.lon)
+        .map((row) => ({ id: row.id, label: row.adresse || row.id, point: toWorld(Number(row.lat), Number(row.lon)) }));
+      notes.push(`${app.r5.points.length} points`);
+    } else if (columns.has("reference") && columns.has("point") && columns.has("minutes")) {
+      app.r5.matrix = new Map(
+        rows.map((row) => [`${row.reference}|${row.point}`, row.minutes === "" ? null : Number(row.minutes)]),
+      );
+      notes.push("matrice");
+    } else {
+      notes.push(`${file.name} : fichier non reconnu`);
+    }
+  }
+  if (grids) notes.unshift(`${grids} grille${grids > 1 ? "s" : ""}`);
+  fillR5Select();
+  if (!app.r5.active && app.r5.grids.size) activateR5(app.r5.grids.keys().next().value);
+  else if (app.r5.active) {
+    updatePanel();
+    requestRender();
+  }
+  toast(`Chargé : ${notes.join(", ") || "rien"}`);
+}
+
+function fillR5Select() {
+  const select = $("r5Reference");
+  const options = [new Option("Carte du site (sans r5py)", "")];
+  for (const [id, raw] of app.r5.grids) options.push(new Option(raw.adresse && raw.adresse !== id ? `${id} · ${raw.adresse}` : id, id));
+  select.replaceChildren(...options);
+  select.value = app.r5.active ?? "";
+  select.hidden = !app.r5.grids.size;
+}
+
+function activateR5(id) {
+  const raw = app.r5.grids.get(id);
+  if (!raw) return;
+  app.r5.active = id;
+  app.r5.grid = r5Grid(raw);
+  app.from = { point: toWorld(raw.lat, raw.lon), label: raw.adresse || id };
+  app.to = null;
+  app.solution = null;
+  app.heatSolution = null;
+  app.heatFrom = "from";
+  $("r5Reference").value = id;
+  recompute();
+  syncUrl();
+}
+
+function leaveR5() {
+  app.r5.active = null;
+  app.r5.grid = null;
+  $("r5Reference").value = "";
+}
+
+function updateR5Panel() {
+  const raw = app.r5.grids.get(app.r5.active);
+  $("tripResult").hidden = true;
+  $("tripHint").hidden = true;
+  const parts = [];
+  const line = (text, className) => {
+    const p = document.createElement("p");
+    p.textContent = text;
+    if (className) p.className = className;
+    parts.push(p);
+  };
+  line(`Temps porte à porte r5py, le ${raw.jour.slice(6)}/${raw.jour.slice(4, 6)}, départs ${raw.plage}.`, "r5-source");
+  if (app.to) {
+    const minutes = r5TimeAt(app.to.point);
+    line("Point cliqué", "trip-eyebrow");
+    line(minutes === null ? "Inaccessible" : formatMinutes(minutes), "r5-time");
+  } else {
+    line("Cliquez sur la carte pour lire un temps.", "trip-hint");
+  }
+  const points = app.r5.points;
+  if (points.length) {
+    const thresholds = app.isochrones.length ? [...app.isochrones].sort((a, b) => a - b) : [app.maxMinutes];
+    const times = points.map(r5PointTime);
+    const list = document.createElement("ul");
+    list.className = "r5-counts";
+    for (const threshold of thresholds) {
+      const count = times.filter((time) => time !== null && time <= threshold).length;
+      const item = document.createElement("li");
+      const label = document.createElement("span");
+      label.textContent = `≤ ${threshold} min`;
+      const value = document.createElement("strong");
+      value.textContent = `${count} / ${points.length} points`;
+      item.append(label, value);
+      list.append(item);
+    }
+    line("Points dans l'isochrone", "trip-eyebrow");
+    parts.push(list);
+    const exact = points.every((point) => app.r5.matrix.has(`${app.r5.active}|${point.id}`));
+    line(exact ? "D'après matrice.csv (temps exacts aux adresses)." : "D'après la grille (chargez matrice.csv pour les temps exacts).", "r5-source");
+  } else {
+    line("Chargez geocodage.csv pour afficher et compter les points.", "r5-source");
+  }
+  $("r5Info").replaceChildren(...parts);
+  $("reach").textContent = "";
+}
+
+function drawR5Points() {
+  if (!app.r5.active || !app.r5.points.length) return;
+  const labels = app.view.scale > STOP_LABEL_SCALE;
+  for (const point of app.r5.points) {
+    const [x, y] = project(point.point);
+    if (x < -20 || y < -20 || x > app.size.width + 20 || y > app.size.height + 20) continue;
+    const time = r5PointTime(point);
+    const inside = time !== null && time <= app.maxMinutes;
+    const [r, g, b] = inside ? paletteColor(time / app.maxMinutes) : [150, 150, 150];
+    ctx.beginPath();
+    ctx.arc(x, y, 5.5, 0, Math.PI * 2);
+    ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#111";
+    ctx.stroke();
+    if (labels) {
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      const text = time === null ? point.id : `${point.id} · ${formatMinutes(time)}`;
+      drawHaloText(text, x + 9, y, { font: "600 11px Inter, sans-serif", color: "#111" });
+    }
+  }
+}
+
+$("r5Files").addEventListener("change", async (event) => {
+  const files = [...event.target.files];
+  event.target.value = ""; // pour pouvoir recharger les mêmes fichiers
+  if (files.length) await loadR5Files(files);
+});
+
+$("r5Reference").addEventListener("change", (event) => {
+  if (event.target.value) {
+    activateR5(event.target.value);
+  } else {
+    leaveR5();
+    recompute();
+    syncUrl();
+  }
+});
+
 // --- Commandes ----------------------------------------------------------------
 
 $("zoomIn").addEventListener("click", () => zoomAt(1.4, app.size.width / 2, app.size.height / 2));
@@ -1209,6 +1477,7 @@ $("busToggle").addEventListener("change", (event) => {
 
 $("isoToggles").addEventListener("change", () => {
   app.isochrones = [...$("isoToggles").querySelectorAll("input:checked")].map((input) => Number(input.value));
+  if (app.r5.active) updatePanel(); // comptes de points par isochrone
   requestRender();
   syncUrl();
 });
@@ -1217,6 +1486,7 @@ $("maxRange").addEventListener("input", (event) => {
   app.maxMinutes = Number(event.target.value);
   updateLegend();
   if (app.grid) paintHeat(app.grid);
+  if (app.r5.active) updatePanel();
   requestRender();
   syncUrl();
 });

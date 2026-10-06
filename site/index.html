@@ -67,7 +67,7 @@
 
     <link rel="preconnect" href="https://fonts.bunny.net" />
     <link rel="stylesheet" href="https://fonts.bunny.net/css?family=inter:400,500,600,700,800" />
-    <link rel="stylesheet" href="./styles.css?v=7" />
+    <link rel="stylesheet" href="./styles.css?v=8" />
   </head>
   <body>
     <header class="topbar">
@@ -122,6 +122,7 @@
               </div>
             </div>
             <p id="tripHint" class="trip-hint">Cliquez sur la carte pour poser une arrivée.</p>
+            <div id="r5Info" class="r5-info" hidden></div>
           </aside>
 
           <div class="map-buttons">
@@ -164,6 +165,14 @@
             <input id="heatOpacity" type="range" min="20" max="100" step="5" value="60" />
             <output id="heatOpacityValue" for="heatOpacity">60 %</output>
           </div>
+          <div class="control-group">
+            <span class="control-label">Résultats r5py</span>
+            <!-- Les fichiers sont lus par le navigateur : ils ne sont envoyés nulle part. -->
+            <label class="button file-button" title="Grilles (grilles/*.json), geocodage.csv et matrice.csv du dossier sortie/">
+              Charger…<input id="r5Files" type="file" multiple accept=".json,.csv" />
+            </label>
+            <select id="r5Reference" aria-label="Adresse de référence r5py" hidden></select>
+          </div>
           <div class="control-group actions">
             <button id="locate" type="button" class="button">Ma position</button>
             <button id="swap" type="button" class="button">Inverser</button>
@@ -204,7 +213,7 @@
     </main>
 
     <div id="toast" class="toast" role="status" hidden></div>
-    <script type="module" src="./app.js?v=12"></script>
+    <script type="module" src="./app.js?v=13"></script>
     <!-- Cloudflare Web Analytics (sans cookie). "spa": false : les mises à jour de l'URL ne comptent pas comme des pages vues. -->
     <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "1904c17ed0624c0cab4d69ea1bacc5e7", "spa": false}'></script>
   </body>

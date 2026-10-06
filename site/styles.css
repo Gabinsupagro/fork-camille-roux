@@ -426,6 +426,77 @@ h1 {
   font-size: 0.85rem;
 }
 
+/* --- Résultats r5py --------------------------------------------------------- */
+
+.file-button {
+  position: relative;
+  padding: 6px 12px;
+  font-size: 0.9rem;
+}
+
+/* Champ fichier invisible mais cliquable et accessible au clavier, posé sur le bouton. */
+.file-button input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.file-button:focus-within {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+#r5Reference {
+  max-width: 240px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.r5-info {
+  margin-top: 10px;
+  font-size: 0.88rem;
+}
+
+.r5-info p {
+  margin: 0 0 6px;
+}
+
+.r5-info .r5-source {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.r5-info .r5-time {
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.r5-counts {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.r5-counts li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+  border-top: 1px solid var(--line);
+}
+
+.r5-counts strong {
+  font-variant-numeric: tabular-nums;
+}
+
 .map-buttons {
   position: absolute;
   top: 14px;

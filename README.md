@@ -87,6 +87,13 @@ Résultats dans `sortie/` (non versionné) :
 - `isochrones.geojson` : isochrones par référence et par seuil (QGIS) ;
 - `grilles/<id>.json` : temps par case de 50 m, dans le repère de la carte du site, pour l'afficher.
 
+Pour les voir sur la carte, lancez le site en local (`python -m http.server 8000 --directory site`), puis
+« Résultats r5py › Charger… » et sélectionnez ensemble les fichiers de `sortie/grilles/`, `geocodage.csv` et
+`matrice.csv`. Les fichiers sont lus par le navigateur et ne sont envoyés nulle part. La liste qui apparaît
+choisit l'adresse de référence : la carte affiche alors sa heatmap et ses isochrones r5py, les points colorés
+selon leur temps, et le nombre de points sous chaque isochrone cochée. Un clic sur la carte donne le temps porte
+à porte depuis la référence ; déplacer le départ, ou choisir « Carte du site », revient au calcul habituel.
+
 Options utiles : `--plage 8:00-9:00` (heure de pointe), `--date AAAAMMJJ`, `--vitesse-marche 5`, `--pas 100`,
 `--sans-grille` (matrice et comptes seulement, plus rapide). Le premier lancement découpe l'extrait OSM à
 l'emprise de la Métropole et construit le réseau (quelques minutes), puis garde les deux en cache. Le GTFS est
