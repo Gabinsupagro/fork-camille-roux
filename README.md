@@ -99,4 +99,6 @@ selon leur temps, et le nombre de points sous chaque isochrone cochée. Un clic 
 Options utiles : `--plage 8:00-9:00` (heure de pointe), `--date AAAAMMJJ`, `--vitesse-marche 5`, `--pas 100`,
 `--sans-grille` (matrice et comptes seulement, plus rapide). Le premier lancement découpe l'extrait OSM à
 l'emprise de la Métropole et construit le réseau (quelques minutes), puis garde les deux en cache. Le GTFS est
-copié sans ses fichiers de tarifs, que R5 refuse (pass de plusieurs jours) ; les temps n'en dépendent pas.
+copié sans ses fichiers de tarifs, que R5 refuse (pass de plusieurs jours) ; les temps n'en dépendent pas. Les
+courses sur réservation (transport à la demande : lignes 27, 28, 31, 35 et 42) sont retirées, comme sur la carte :
+seules les lignes régulières comptent.

@@ -229,16 +229,64 @@ def crop_osm(osm: Path, out_dir: Path) -> Path:
     return target
 
 
-def gtfs_without_fares(gtfs: Path, out_dir: Path) -> Path:
-    """R5 refuse les durées de validité de plusieurs jours (pass 2 à 7 jours) des tarifs TaM : on retire les
-    fichiers de tarifs, sans effet sur les temps de trajet."""
-    target = out_dir / f"{gtfs.stem}_sans_tarifs.zip"
+# Version du GTFS préparé : à changer quand la préparation change, pour ne pas réutiliser un ancien cache.
+PREPARED_GTFS_VERSION = 2
+
+
+def csv_rewrite(data: bytes, keep) -> bytes:
+    """Réécrit une table GTFS en ne gardant (et en modifiant éventuellement) que les lignes pour lesquelles keep(row)
+    renvoie une ligne."""
+    text = data.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    out = io.StringIO()
+    writer = csv.DictWriter(out, fieldnames=reader.fieldnames, lineterminator="\n")
+    writer.writeheader()
+    for row in reader:
+        kept = keep(row)
+        if kept is not None:
+            writer.writerow(kept)
+    return out.getvalue().encode("utf-8")
+
+
+def prepare_gtfs(gtfs: Path, out_dir: Path) -> Path:
+    """Copie du GTFS adaptée à R5 :
+    - sans les fichiers de tarifs, que R5 refuse (pass de 2 à 7 jours) et dont les temps ne dépendent pas ;
+    - sans le transport à la demande (lignes 27, 28, 31, 35 et 42 de la TaM) : les courses marquées « TAD » dans
+      trips.txt, ou desservies sur réservation à tous leurs arrêts (pickup_type / drop_off_type 2), sont retirées ;
+      un arrêt sur réservation d'une course régulière devient sans montée ni descente (type 1). Comme la carte du
+      site, qui écarte aussi ces courses."""
+    target = out_dir / f"{gtfs.stem}_r5_v{PREPARED_GTFS_VERSION}.zip"
     if target.exists() and target.stat().st_mtime >= gtfs.stat().st_mtime:
         return target
-    with zipfile.ZipFile(gtfs) as source, zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as copy:
-        for name in source.namelist():
-            if not name.startswith("fare"):
-                copy.writestr(name, source.read(name))
+    with zipfile.ZipFile(gtfs) as source:
+        stop_times = list(csv.DictReader(io.StringIO(source.read("stop_times.txt").decode("utf-8-sig"))))
+        on_demand = lambda row: "2" in ((row.get("pickup_type") or "").strip(), (row.get("drop_off_type") or "").strip())
+        stops_per_trip, demand_per_trip = {}, {}
+        for row in stop_times:
+            stops_per_trip[row["trip_id"]] = stops_per_trip.get(row["trip_id"], 0) + 1
+            demand_per_trip[row["trip_id"]] = demand_per_trip.get(row["trip_id"], 0) + on_demand(row)
+        trips = list(csv.DictReader(io.StringIO(source.read("trips.txt").decode("utf-8-sig"))))
+        removed = {row["trip_id"] for row in trips if (row.get("TAD") or "").strip()}
+        removed |= {trip for trip, count in stops_per_trip.items() if count and demand_per_trip[trip] == count}
+
+        def keep_stop_time(row):
+            if row["trip_id"] in removed:
+                return None
+            if on_demand(row):  # arrêt sur réservation d'une course régulière
+                row["pickup_type"] = row["drop_off_type"] = "1"
+            return row
+
+        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as copy:
+            for name in source.namelist():
+                if name.startswith("fare"):
+                    continue
+                data = source.read(name)
+                if name == "trips.txt":
+                    data = csv_rewrite(data, lambda row: None if row["trip_id"] in removed else row)
+                elif name == "stop_times.txt":
+                    data = csv_rewrite(data, keep_stop_time)
+                copy.writestr(name, data)
+    print(f"GTFS préparé pour R5 : {len(removed)} courses sur réservation retirées")
     return target
 
 
@@ -327,7 +375,7 @@ def main() -> None:
     print(f"Jour de référence {day}, départs {args.plage}, marche {args.vitesse_marche:.1f} km/h")
 
     started = time.time()
-    network = r5py.TransportNetwork(crop_osm(args.osm, args.sortie), [gtfs_without_fares(args.gtfs, args.sortie)])
+    network = r5py.TransportNetwork(crop_osm(args.osm, args.sortie), [prepare_gtfs(args.gtfs, args.sortie)])
     print(f"Réseau prêt en {time.time() - started:.0f} s")
     options = dict(
         departure=departure,
