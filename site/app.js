@@ -65,7 +65,7 @@ const app = {
   size: { width: 0, height: 0, dpr: 1 },
   from: null, // { point, label }
   to: null, // { point, label }
-  includeBus: false,
+  includeBus: true, // bus inclus par défaut (décochable : ?bus=0)
   maxMinutes: DEFAULT_MAX,
   isochrones: [...DEFAULT_ISOCHRONES],
   heatFrom: "from", // la heatmap part du départ ou de l'arrivée
@@ -244,11 +244,16 @@ function solveFrom(point) {
   const seedWalk = new Float64Array(graph.count);
   const heap = new MinHeap();
 
-  const seeds = data.stations
-    .map((station, index) => ({ index, walk: walkMinutes(hypot(point, station.point)) + access }))
-    .filter((seed) => stationUsable(seed.index))
-    .sort((a, b) => a.walk - b.walk)
-    .slice(0, SEED_STATIONS);
+  // Arrêts de départ : les plus proches stations de tram, plus (bus cochés) les plus proches arrêts de bus.
+  // Pris ensemble, les nombreux arrêts de bus évinceraient les stations de tram : ajouter le bus rallongerait
+  // alors certains trajets.
+  const nearest = (keep) =>
+    data.stations
+      .map((station, index) => ({ index, walk: walkMinutes(hypot(point, station.point)) + access }))
+      .filter((seed) => keep(data.stations[seed.index]))
+      .sort((a, b) => a.walk - b.walk)
+      .slice(0, SEED_STATIONS);
+  const seeds = [...nearest((station) => station.tram), ...(app.includeBus ? nearest((station) => !station.tram) : [])];
 
   for (const seed of seeds) {
     for (const state of data.stationStates[seed.index]) {
@@ -1058,7 +1063,7 @@ function syncUrl() {
   if (app.from && !app.r5.active) params.set("from", formatPair(app.from.point));
   if (app.to && !app.r5.active) params.set("to", formatPair(app.to.point));
   if (app.to && app.heatFrom === "to") params.set("carte", "arrivee");
-  if (app.includeBus) params.set("bus", "1");
+  if (!app.includeBus) params.set("bus", "0");
   if (app.maxMinutes !== DEFAULT_MAX) params.set("max", String(app.maxMinutes));
   const iso = [...app.isochrones].sort((a, b) => a - b).join(",");
   if (iso !== DEFAULT_ISOCHRONES.join(",")) params.set("iso", iso || "0");
@@ -1071,7 +1076,7 @@ function syncUrl() {
 
 function restoreFromUrl() {
   const params = new URLSearchParams(location.search);
-  app.includeBus = params.get("bus") === "1";
+  app.includeBus = params.get("bus") !== "0"; // par défaut avec les bus ; les anciens liens « bus=1 » restent valables
   $("busToggle").checked = app.includeBus;
   const max = Number(params.get("max"));
   if (max >= MIN_MAX && max <= 90) app.maxMinutes = max;
