@@ -1,0 +1,13 @@
+# Environnement pour r5_isochrones.py :  conda env create -f environment-r5.yml  puis  conda activate r5
+name: r5
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - r5py>=1.1
+  - openjdk>=21   # moteur R5 (Java)
+  - pyosmium     # découpe de l'extrait OSM à la Métropole
+  - geopandas
+  - shapely>=2
+  - numpy
+  - pandas

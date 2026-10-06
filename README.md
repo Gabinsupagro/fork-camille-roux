@@ -46,3 +46,48 @@ Les temps viennent des horaires GTFS d'un mardi ou jeudi ordinaire, entre 7 h et
 - marche à pied à 75 m/min (4,5 km/h) à vol d'oiseau, sans pénalité d'accès (arrêts en surface).
 
 Pas de temps réel ni de perturbations. Les trajets à la demande (TaD) sont exclus.
+
+## Temps porte à porte et isochrones précises (r5py, en local)
+
+`r5_isochrones.py` calcule des temps de trajet porte à porte en suivant les vraies rues (marche + tram et bus
+TaM), avec [r5py](https://r5py.readthedocs.io/). Pour chaque adresse de référence, il donne le temps vers chaque
+point, le nombre de points sous 5, 10, 15, 20, 30, 45 et 60 min, et une grille fine de temps (50 m) pour dessiner
+l'isochrone. Tout tourne sur votre machine : les adresses ne sont envoyées à aucun service.
+
+Le temps est la médiane des temps porte à porte pour des départs étalés sur 7 h–20 h (attente comprise), un mardi
+ou jeudi ordinaire du GTFS, à 4,5 km/h à pied : la même logique que la carte.
+
+Installation (une fois) :
+
+```bash
+conda env create -f environment-r5.yml
+conda activate r5
+```
+
+Données (une fois) dans `data/` :
+
+- l'extrait OpenStreetMap de la région, `languedoc-roussillon-latest.osm.pbf`, sur
+  [Geofabrik](https://download.geofabrik.de/europe/france/languedoc-roussillon.html) ;
+- pour géocoder des adresses sans les envoyer en ligne, le fichier de la Base Adresse Nationale de l'Hérault,
+  `adresses-34.csv.gz`, sur [adresse.data.gouv.fr](https://adresse.data.gouv.fr/data/ban/adresses/latest/csv/).
+
+Adresses dans `prive/` (non versionné), en CSV (`;` ou `,`) avec une colonne `id` et soit `adresse`
+(« 12 rue de la Loge 34000 Montpellier »), soit `lat` et `lon` :
+
+```bash
+python r5_isochrones.py --osm data/languedoc-roussillon-latest.osm.pbf \
+    --references prive/references.csv --points prive/points.csv --ban data/adresses-34.csv.gz
+```
+
+Résultats dans `sortie/` (non versionné) :
+
+- `geocodage.csv` : où chaque adresse a été placée, avec la qualité du rapprochement (à vérifier) ;
+- `matrice.csv` : temps de chaque référence vers chaque point, en minutes (vide si inaccessible en 90 min) ;
+- `comptes.csv` : nombre de points sous chaque seuil, par référence ;
+- `isochrones.geojson` : isochrones par référence et par seuil (QGIS) ;
+- `grilles/<id>.json` : temps par case de 50 m, dans le repère de la carte du site, pour l'afficher.
+
+Options utiles : `--plage 8:00-9:00` (heure de pointe), `--date AAAAMMJJ`, `--vitesse-marche 5`, `--pas 100`,
+`--sans-grille` (matrice et comptes seulement, plus rapide). Le premier lancement découpe l'extrait OSM à
+l'emprise de la Métropole et construit le réseau (quelques minutes), puis garde les deux en cache. Le GTFS est
+copié sans ses fichiers de tarifs, que R5 refuse (pass de plusieurs jours) ; les temps n'en dépendent pas.

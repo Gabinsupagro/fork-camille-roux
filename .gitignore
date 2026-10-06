@@ -2,3 +2,9 @@
 __pycache__/
 *.pyc
 .venv/
+
+# Calculs r5py : adresses confidentielles, résultats et sources volumineuses, jamais versionnés
+prive/
+sortie/
+data/*.osm.pbf
+data/adresses-*.csv.gz
