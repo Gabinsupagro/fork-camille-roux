@@ -76,8 +76,11 @@ def read_table(path: Path) -> list[dict]:
             break
         except UnicodeDecodeError:
             continue
-    dialect = csv.Sniffer().sniff(text.splitlines()[0], delimiters=";,\t")
-    rows = list(csv.DictReader(io.StringIO(text), dialect=dialect))
+    # Fins de ligne Windows (\r\n), Unix (\n) ou anciennes Mac / certains exports Excel (\r) : toutes ramenées à \n.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    dialect = csv.Sniffer().sniff(text.split("\n", 1)[0], delimiters=";,\t")
+    rows = list(csv.DictReader(io.StringIO(text, newline=""), dialect=dialect))
+    rows = [row for row in rows if any((value or "").strip() for value in row.values())]  # lignes vides
     return [{(key or "").strip().lower(): (value or "").strip() for key, value in row.items()} for row in rows]
 
 
