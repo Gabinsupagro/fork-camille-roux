@@ -25,7 +25,9 @@ Puis ouvrir [http://localhost:8000](http://localhost:8000).
 ## Données
 
 - GTFS théorique du réseau TaM ([transport.data.gouv.fr](https://transport.data.gouv.fr/datasets/reseau-urbain-tam))
-- Tracés des lignes de tram, étangs et parcs : © contributeurs OpenStreetMap (ODbL), via Overpass
+- Tracés des lignes de tram et de bus, étangs et parcs : © contributeurs OpenStreetMap (ODbL), via Overpass ;
+  les lignes de bus (relations du réseau « TaM ») sont dessinées en trait fin quand la case Bus est cochée, et
+  une ligne sans tracé dans OSM est tracée d'arrêt en arrêt (`python3 fetch_data.py --bus-only` les met à jour)
 - Contours des 31 communes de Montpellier Méditerranée Métropole ([geo.api.gouv.fr](https://geo.api.gouv.fr/))
 - Communes voisines de l'Hérault et du Gard ([geo.api.gouv.fr](https://geo.api.gouv.fr/)), dessinées en terre autour de la
   Métropole : ce qui reste découvert est la mer, en bleu. Fichier `data/context.geojson`, que

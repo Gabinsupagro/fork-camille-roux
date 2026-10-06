@@ -421,6 +421,18 @@ def extract_network():
         headway = window_minutes / mean_departures
         waits[key] = round(min(MAX_WAIT, max(MIN_WAIT, headway / 2.0)), 2)
 
+    # Par ligne et par sens, les arrêts de la course la plus longue : tracé de repli d'une ligne de bus sans
+    # relation OpenStreetMap (ligne de substitution, par exemple).
+    longest: Dict[Tuple[str, str], List[str]] = {}
+    for trip_id, sequence in stop_times.items():
+        key = (trips[trip_id]["route_id"], trips[trip_id]["direction_id"])
+        stop_ids = [stop_id for _, stop_id, _, _ in sorted(sequence)]
+        if len(stop_ids) > len(longest.get(key, [])):
+            longest[key] = stop_ids
+    stop_paths: Dict[str, List[List[Point]]] = defaultdict(list)
+    for (route_id, _), stop_ids in sorted(longest.items()):
+        stop_paths[route_id].append([lonlat_to_xy(float(stops[s]["stop_lon"]), float(stops[s]["stop_lat"])) for s in stop_ids])
+
     route_info = {
         route_id: {
             "mode": "tram" if row["route_type"] == "0" else "bus",
@@ -429,7 +441,7 @@ def extract_network():
         }
         for route_id, row in routes.items()
     }
-    return reference_date, complexes, edges, waits, route_info
+    return reference_date, complexes, edges, waits, route_info, stop_paths
 
 
 def build_graph(complexes: Sequence[dict], edges: Dict[Tuple[int, int, str], float], waits: Dict[Tuple[int, str], float]):
@@ -508,6 +520,36 @@ def extract_tram_routes(route_info: Dict[str, dict]) -> List[dict]:
     return shapes
 
 
+def extract_bus_routes(route_info: Dict[str, dict], stop_paths: Dict[str, List[List[Point]]]) -> Tuple[List[dict], List[str]]:
+    """Tracés des lignes de bus régulières : les relations OpenStreetMap du réseau TaM (data/bus_osm.json, ref = nom
+    de la ligne ; les lignes sur réservation y sont « 27-TAD »… et ne correspondent à rien), sinon d'arrêt en arrêt.
+    Renvoie les tracés et les lignes tracées d'arrêt en arrêt."""
+    by_name = {info["name"]: route_id for route_id, info in route_info.items() if info["mode"] == "bus" and route_id in stop_paths}
+    path = DATA_DIR / "bus_osm.json"
+    payload = load_json(path) if path.exists() else {"elements": []}
+    seen: Dict[str, set] = defaultdict(set)
+    shapes = []
+    for relation in sorted(payload["elements"], key=lambda item: item["id"]):
+        route_id = by_name.get(relation.get("tags", {}).get("ref", ""))
+        if not route_id:
+            continue
+        for member in relation.get("members", []):
+            # Rôle vide = la voie suivie ; les arrêts et quais (stop, platform) ne sont pas tracés.
+            if member["type"] != "way" or member.get("role") not in ("", None) or member["ref"] in seen[route_id]:
+                continue
+            seen[route_id].add(member["ref"])
+            points = [lonlat_to_xy(node["lon"], node["lat"]) for node in member.get("geometry", []) if node]
+            if len(points) >= 2:
+                shapes.append({"id": route_id, "color": route_info[route_id]["color"],
+                               "points": [round_point(p) for p in simplify_polyline(points, MIN_LINE_DISTANCE)]})
+    from_stops = sorted((route_id for route_id in by_name.values() if not seen[route_id]), key=lambda r: (len(route_info[r]["name"]), route_info[r]["name"]))
+    for route_id in from_stops:
+        for points in stop_paths[route_id]:
+            if len(points) >= 2:
+                shapes.append({"id": route_id, "color": route_info[route_id]["color"], "points": [round_point(p) for p in points]})
+    return shapes, [route_info[r]["name"] for r in from_stops]
+
+
 # --- Grid -------------------------------------------------------------------
 
 
@@ -548,9 +590,10 @@ def main() -> None:
     masked_water, water, parks = extract_water_and_parks(bounds)
     context = extract_context()
 
-    reference_date, complexes, edges, waits, route_info = extract_network()
+    reference_date, complexes, edges, waits, route_info, stop_paths = extract_network()
     route_states, station_states, adjacency = build_graph(complexes, edges, waits)
     routes = extract_tram_routes(route_info)
+    bus_routes, bus_from_stops = extract_bus_routes(route_info, stop_paths)
 
     stations = [
         {
@@ -591,6 +634,7 @@ def main() -> None:
         "water": [serialize_polygon(polygon) for polygon in masked_water + water],
         "parks": [serialize_polygon(polygon) for polygon in parks],
         "routes": routes,
+        "busRoutes": bus_routes,
         "routeInfo": route_info,
         "stations": [{**station, "point": round_point(station["point"])} for station in stations],
         "routeStates": route_states,
@@ -607,8 +651,10 @@ def main() -> None:
         f"Wrote {SITE_DATA_PATH} "
         f"({SITE_DATA_PATH.stat().st_size / 1_000_000:.2f} MB, GTFS du {reference_date}, "
         f"{len(stations)} arrêts dont {tram_count} tram, {len(route_states)} states, "
-        f"{sum(len(a) for a in adjacency)} edges, {len(cells)} cells ({cols}×{rows}), {len(routes)} tram segments)"
+        f"{sum(len(a) for a in adjacency)} edges, {len(cells)} cells ({cols}×{rows}), {len(routes)} tram segments, {len(bus_routes)} bus segments)"
     )
+    if bus_from_stops:
+        print(f"Lignes de bus tracées d'arrêt en arrêt (pas de tracé dans data/bus_osm.json) : {', '.join(bus_from_stops)}")
 
 
 if __name__ == "__main__":

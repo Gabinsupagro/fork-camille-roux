@@ -3,7 +3,7 @@
 
 import { createBasemap, DEFAULT_PROVIDER, PROVIDERS } from "./basemap.js?v=2";
 
-const DATA_URL = new URL("./data/commute_map_data.json?v=6", import.meta.url);
+const DATA_URL = new URL("./data/commute_map_data.json?v=7", import.meta.url);
 const GEOCODER_URL = "https://api-adresse.data.gouv.fr/search/";
 
 const DEFAULT_FROM = { lat: 43.60853, lon: 3.8799, label: "Place de la Comédie" };
@@ -561,6 +561,13 @@ function buildPaths(data) {
     waterClip: polygonsPath(data.water),
     communeLines,
     routes: [...routes.values()].reverse(),
+    // Lignes de bus : un chemin par ligne, dessiné en trait fin sous le tram quand les bus sont cochés.
+    busRoutes: [...(data.busRoutes ?? []).reduce((byLine, route) => {
+      if (!byLine.has(route.id)) byLine.set(route.id, { color: route.color, path: new Path2D() });
+      const { path } = byLine.get(route.id);
+      route.points.forEach(([x, y], i) => (i ? path.lineTo(x - ox, y - oy) : path.moveTo(x - ox, y - oy)));
+      return byLine;
+    }, new Map()).values()],
   };
 }
 
@@ -837,6 +844,16 @@ function render() {
 
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
+  if (app.includeBus) {
+    // Bus : trait fin et un peu transparent, pour rester lisible sous le tram et sur la heatmap.
+    ctx.globalAlpha = 0.8;
+    ctx.lineWidth = 1.6 * px;
+    for (const route of app.paths.busRoutes) {
+      ctx.strokeStyle = route.color;
+      ctx.stroke(route.path);
+    }
+    ctx.globalAlpha = 1;
+  }
   for (const route of app.paths.routes) {
     ctx.strokeStyle = route.color;
     ctx.lineWidth = 3 * px;

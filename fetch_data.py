@@ -24,6 +24,8 @@ OVERPASS_URLS = [
 # Communes around the metropolis (Hérault, Gard): the land beyond its borders, so that what stays uncovered is the sea.
 CONTEXT_DEPARTMENTS = ["34", "30"]
 TRAM_QUERY = '[out:json][timeout:110];relation["route"="tram"](43.50,3.70,43.72,4.05);out geom;'
+# Tracés des lignes de bus TaM (relations OSM du réseau « TaM ») : dessinés sur la carte quand les bus sont cochés.
+BUS_QUERY = '[out:json][timeout:180];relation["route"="bus"]["network"="TaM"](43.45,3.68,43.75,4.08);out geom;'
 WATER_PARKS_QUERY = (
     "[out:json][timeout:110];("
     'relation["natural"="water"](43.45,3.68,43.75,4.08);'
@@ -69,6 +71,11 @@ def fetch_context() -> None:
 
 def main() -> None:
     DATA_DIR.mkdir(exist_ok=True)
+    if "--bus-only" in sys.argv:
+        # Seulement les tracés de bus : le GTFS et les autres fichiers ne bougent pas.
+        print("Tracés bus (OSM)…")
+        (DATA_DIR / "bus_osm.json").write_bytes(overpass(BUS_QUERY))
+        return
     if "--context-only" in sys.argv:
         # Only the neighbouring communes (sea): leaves the GTFS and the OSM files untouched.
         fetch_context()
@@ -80,6 +87,8 @@ def main() -> None:
     fetch_context()
     print("Tracés tram (OSM)…")
     (DATA_DIR / "tram_osm.json").write_bytes(overpass(TRAM_QUERY))
+    print("Tracés bus (OSM)…")
+    (DATA_DIR / "bus_osm.json").write_bytes(overpass(BUS_QUERY))
     print("Étangs et parcs (OSM)…")
     (DATA_DIR / "osm_water_parks.json").write_bytes(overpass(WATER_PARKS_QUERY))
 
