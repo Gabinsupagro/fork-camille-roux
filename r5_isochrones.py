@@ -289,6 +289,14 @@ def metropole_grid(step: float):
 
 def main() -> None:
     args = parse_args()
+    # Un fichier introuvable fait sinon échouer pyosmium ou Java avec un message peu lisible (voire mal décodé).
+    for option, path in (("--osm", args.osm), ("--gtfs", args.gtfs), ("--references", args.references),
+                         ("--points", args.points), ("--ban", args.ban)):
+        if path is not None and not path.is_file():
+            nearby = sorted(p.name for p in path.parent.glob("*")) if path.parent.is_dir() else []
+            sys.exit(f"{option} : fichier introuvable : {path.resolve()}"
+                     + (f"\n  Fichiers présents dans {path.parent} : {', '.join(nearby) or '(aucun)'}" if path.parent.is_dir() else
+                        f"\n  Le dossier {path.parent.resolve()} n'existe pas."))
     args.sortie.mkdir(parents=True, exist_ok=True)
 
     # r5py lit sa configuration sur la ligne de commande : on lui passe la sienne avant de l'importer.
