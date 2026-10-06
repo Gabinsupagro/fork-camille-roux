@@ -60,6 +60,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pas", type=float, default=50.0, help="pas de la grille en mètres (défaut : 50)")
     parser.add_argument("--max-minutes", type=int, default=90, help="au-delà, un point est jugé inaccessible (défaut : 90)")
     parser.add_argument("--sans-grille", action="store_true", help="matrice et comptes seulement, sans grille ni isochrones")
+    parser.add_argument("--tout-recalculer", action="store_true",
+                        help="ignore le cache (sortie/cache/) et recalcule tout, géocodage compris")
     parser.add_argument("--r5-classpath", help="fichier .jar de R5 déjà téléchargé (sinon r5py le télécharge)")
     parser.add_argument("--memoire", default="4G", help="mémoire maximale de Java (défaut : 4G)")
     return parser.parse_args()
@@ -188,6 +190,35 @@ class BanGeocoder:
             lat, lon = numbers[nearest] if nearest else numbers[next(iter(numbers))]
             quality += f", numéro le plus proche ({nearest})" if nearest else ", voie sans numéro"
         return {"lat": lat, "lon": lon, "qualite": quality, "trouve": f"{key[1]} {key[0]}"}
+
+
+class CachedGeocoder:
+    """Géocodage avec mémoire : une adresse déjà trouvée n'est pas recherchée à nouveau, et le fichier BAN
+    (long à lire) n'est chargé qu'à la première adresse inconnue. Le cache est oublié si le fichier BAN change."""
+
+    def __init__(self, ban: Path | None, cache_path: Path, reset: bool):
+        self.ban, self.path, self.geocoder = ban, cache_path, None
+        self.stamp = f"{ban.stat().st_size}-{int(ban.stat().st_mtime)}" if ban else None
+        saved = {} if reset or not cache_path.exists() else json.loads(cache_path.read_text(encoding="utf-8"))
+        self.known = saved.get("adresses", {}) if saved.get("ban") in (self.stamp, None) or ban is None else {}
+        self.hits = self.misses = 0
+
+    def geocode(self, address: str) -> dict:
+        if address in self.known:
+            self.hits += 1
+            return dict(self.known[address])
+        if self.ban is None:
+            sys.exit(f"Adresse jamais géocodée et pas de --ban (fichier BAN) pour la chercher : « {address} »")
+        if self.geocoder is None:
+            self.geocoder = BanGeocoder(self.ban)
+        self.misses += 1
+        found = self.geocoder.geocode(address)
+        self.known[address] = found
+        return dict(found)
+
+    def save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps({"ban": self.stamp, "adresses": self.known}, ensure_ascii=False), encoding="utf-8")
 
 
 # --- Réseau ----------------------------------------------------------------
@@ -335,6 +366,33 @@ def metropole_grid(step: float):
 # --- Calcul -----------------------------------------------------------------
 
 
+# Version du calcul : à changer quand la façon de calculer change, pour que le cache soit refait.
+CALCULATION_VERSION = 1
+
+
+def file_digest(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def fingerprint(*parts) -> str:
+    """Empreinte courte de tout ce dont un résultat dépend : si elle change, le résultat en cache ne vaut plus."""
+    import hashlib
+
+    return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def place_key(place: dict) -> str:
+    """Un lieu est reconnu par sa position, pas par son id : renommer un point ne le fait pas recalculer,
+    corriger son adresse si."""
+    return f"{place['lat']:.6f},{place['lon']:.6f}"
+
+
 def main() -> None:
     args = parse_args()
     # Un fichier introuvable fait sinon échouer pyosmium ou Java avec un message peu lisible (voire mal décodé).
@@ -346,6 +404,8 @@ def main() -> None:
                      + (f"\n  Fichiers présents dans {path.parent} : {', '.join(nearby) or '(aucun)'}" if path.parent.is_dir() else
                         f"\n  Le dossier {path.parent.resolve()} n'existe pas."))
     args.sortie.mkdir(parents=True, exist_ok=True)
+    cache_dir = args.sortie / "cache"
+    cache_dir.mkdir(exist_ok=True)
 
     # r5py lit sa configuration sur la ligne de commande : on lui passe la sienne avant de l'importer.
     r5_args = ["--max-memory", args.memoire]
@@ -358,25 +418,40 @@ def main() -> None:
     import r5py
     import shapely
 
-    geocoder = BanGeocoder(args.ban) if args.ban else None
+    # --- Lieux (géocodage avec mémoire) ---
+    geocoder = CachedGeocoder(args.ban, cache_dir / "geocodage.json", args.tout_recalculer)
     references, report = read_places(args.references, geocoder, "ref")
     points, point_report = read_places(args.points, geocoder, "pt") if args.points else ([], [])
     report += point_report
+    geocoder.save()
     pd.DataFrame(report).to_csv(args.sortie / "geocodage.csv", index=False, sep=";", encoding="utf-8-sig")
     missing = [row for row in report if row["lat"] is None]
-    print(f"Géocodage : {len(report) - len(missing)}/{len(report)} lieux placés (détail : geocodage.csv)")
+    print(f"Géocodage : {len(report) - len(missing)}/{len(report)} lieux placés "
+          f"({geocoder.hits} déjà connus, {geocoder.misses} cherchés ; détail : geocodage.csv)")
     for row in missing:
         print(f"  non trouvé : {row['fichier']} {row['id']} « {row['adresse']} »")
     if not references:
         sys.exit("Aucune adresse de référence placée.")
 
+    # --- Contexte du calcul : ce dont dépendent tous les temps ---
     day = args.date or reference_date(args.gtfs)
     departure, window = parse_window(args.plage, day)
     print(f"Jour de référence {day}, départs {args.plage}, marche {args.vitesse_marche:.1f} km/h")
+    osm, gtfs = crop_osm(args.osm, args.sortie), prepare_gtfs(args.gtfs, args.sortie)
+    context = fingerprint(CALCULATION_VERSION, r5py.__version__, file_digest(osm), file_digest(gtfs), day, args.plage,
+                          args.vitesse_marche, args.max_minutes)
+    grid_context = fingerprint(context, args.pas, file_digest(build_data.DATA_DIR / "communes_3m.geojson"))
 
-    started = time.time()
-    network = r5py.TransportNetwork(crop_osm(args.osm, args.sortie), [prepare_gtfs(args.gtfs, args.sortie)])
-    print(f"Réseau prêt en {time.time() - started:.0f} s")
+    network = None
+
+    def get_network():
+        nonlocal network
+        if network is None:
+            started = time.time()
+            network = r5py.TransportNetwork(osm, [gtfs])
+            print(f"Réseau prêt en {time.time() - started:.0f} s")
+        return network
+
     options = dict(
         departure=departure,
         departure_time_window=window,
@@ -385,16 +460,41 @@ def main() -> None:
         speed_walking=args.vitesse_marche,
         transport_modes=[r5py.TransportMode.TRANSIT, r5py.TransportMode.WALK],
     )
-    as_frame = lambda places: gpd.GeoDataFrame(
-        {"id": [p["id"] for p in places]}, geometry=gpd.points_from_xy([p["lon"] for p in places], [p["lat"] for p in places]), crs=4326
+    as_frame = lambda places, ids: gpd.GeoDataFrame(
+        {"id": ids}, geometry=gpd.points_from_xy([p["lon"] for p in places], [p["lat"] for p in places]), crs=4326
     )
-    origins = as_frame(references)
 
-    # Matrice références × points, et nombre de points sous chaque seuil.
+    # --- Matrice références × points : seules les paires inconnues sont calculées ---
     if points:
-        started = time.time()
-        matrix = r5py.TravelTimeMatrix(network, origins=origins, destinations=as_frame(points), **options)
-        matrix = matrix.rename(columns={"from_id": "reference", "to_id": "point", "travel_time": "minutes"})
+        matrix_cache = cache_dir / "matrice.json"
+        saved = {} if args.tout_recalculer or not matrix_cache.exists() else json.loads(matrix_cache.read_text(encoding="utf-8"))
+        if saved and saved.get("contexte") != context:
+            print("Matrice : données ou réglages changés depuis le dernier calcul, tout est recalculé")
+        known = saved.get("temps", {}) if saved.get("contexte") == context else {}
+        ref_keys = {place_key(ref) for ref in references}
+        point_keys = {place_key(point) for point in points}
+        todo = {rk: sorted(pk for pk in point_keys if f"{rk}|{pk}" not in known) for rk in sorted(ref_keys)}
+        todo = {rk: pks for rk, pks in todo.items() if pks}
+        pairs = sum(len(pks) for pks in todo.values())
+        print(f"Matrice {len(references)} × {len(points)} : {len(ref_keys) * len(point_keys) - pairs} paires déjà calculées, {pairs} à calculer")
+        if todo:
+            started = time.time()
+            by_key = {place_key(p): p for p in [*references, *points]}
+            origins = sorted(todo)
+            destinations = sorted({pk for pks in todo.values() for pk in pks})
+            result = r5py.TravelTimeMatrix(get_network(), origins=as_frame([by_key[k] for k in origins], origins),
+                                           destinations=as_frame([by_key[k] for k in destinations], destinations), **options)
+            for row in result.itertuples(index=False):
+                if row.to_id in todo.get(row.from_id, ()):
+                    known[f"{row.from_id}|{row.to_id}"] = None if pd.isna(row.travel_time) else float(row.travel_time)
+            print(f"  calculées en {time.time() - started:.1f} s")
+        # Le cache garde aussi les lieux retirés des fichiers : les remettre ne coûte rien.
+        matrix_cache.write_text(json.dumps({"contexte": context, "temps": known}), encoding="utf-8")
+        matrix = pd.DataFrame(
+            [{"reference": ref["id"], "point": point["id"], "minutes": known.get(f"{place_key(ref)}|{place_key(point)}")}
+             for ref in references for point in points]
+        )
+        matrix["minutes"] = matrix["minutes"].astype(float)
         matrix.to_csv(args.sortie / "matrice.csv", index=False, sep=";", encoding="utf-8-sig")
         counts = pd.DataFrame(
             [{"reference": ref["id"], "adresse": ref["label"],
@@ -403,49 +503,73 @@ def main() -> None:
              for ref in references]
         )
         counts.to_csv(args.sortie / "comptes.csv", index=False, sep=";", encoding="utf-8-sig")
-        print(f"Matrice {len(references)} × {len(points)} en {time.time() - started:.1f} s")
         print(counts.to_string(index=False))
 
     if args.sans_grille:
+        print(f"Résultats dans {args.sortie}")
         return
 
-    # Grille fine : temps vers chaque case de la Métropole, pour dessiner l'isochrone.
+    # --- Grilles et isochrones : une par référence, gardées en cache par position ---
+    grid_cache = cache_dir / "grilles"
+    grid_cache.mkdir(exist_ok=True)
+    cached_file = lambda ref: grid_cache / f"{grid_context}_{fingerprint(place_key(ref))}.npz"
+    pending = [ref for ref in references if args.tout_recalculer or not cached_file(ref).exists()]
+    print(f"Grilles : {len(references) - len(pending)} déjà calculées, {len(pending)} à calculer")
     (min_x, min_y), cols, rows, row_index, col_index, lat, lon, land = metropole_grid(args.pas)
-    cells = gpd.GeoDataFrame({"id": np.arange(len(lat))}, geometry=gpd.points_from_xy(lon, lat), crs=4326)
-    print(f"Grille de {args.pas:.0f} m : {len(cells)} cases dans la Métropole")
-    grid_dir = args.sortie / "grilles"
-    grid_dir.mkdir(exist_ok=True)
-    isochrones = []
-    for ref in references:
+    if pending:
+        cells = gpd.GeoDataFrame({"id": np.arange(len(lat))}, geometry=gpd.points_from_xy(lon, lat), crs=4326)
+        print(f"Grille de {args.pas:.0f} m : {len(cells)} cases dans la Métropole")
+    half = args.pas / 2
+    for ref in pending:
         started = time.time()
-        times = r5py.TravelTimeMatrix(network, origins=as_frame([ref]), destinations=cells, **options)
+        times = r5py.TravelTimeMatrix(get_network(), origins=as_frame([ref], [ref["id"]]), destinations=cells, **options)
         minutes = times.set_index("to_id").travel_time.reindex(cells.id).to_numpy()
         flat = np.full(cols * rows, -1, dtype=np.int16)  # -1 : hors Métropole ou inaccessible
         reached = ~np.isnan(minutes)
         flat[row_index[reached] * cols + col_index[reached]] = np.round(minutes[reached]).astype(np.int16)
-        (grid_dir / f"{safe_name(ref['id'])}.json").write_text(json.dumps({
+        # Isochrones : union des cases atteintes sous chaque seuil, découpée sur la Métropole (WKB, en lon/lat).
+        shapes, areas = [], []
+        for threshold in THRESHOLDS:
+            keep = reached & (np.nan_to_num(minutes, nan=1e9) <= threshold)
+            if not keep.any():
+                shapes.append(b""), areas.append(0.0)
+                continue
+            cx = min_x + (col_index[keep] + 0.5) * args.pas
+            cy = min_y + (row_index[keep] + 0.5) * args.pas
+            area = shapely.intersection(shapely.union_all(shapely.box(cx - half, cy - half, cx + half, cy + half)), land)
+            shapes.append(shapely.to_wkb(xy_to_lonlat(area))), areas.append(round(area.area / 1e6, 2))
+        np.savez_compressed(cached_file(ref), minutes=flat, shapes=np.array(shapes, dtype=object), areas=np.array(areas),
+                            frame=np.array([min_x, min_y, cols, rows]))
+        print(f"  {ref['id']} : calculée en {time.time() - started:.1f} s, {int(reached.sum())} cases atteintes")
+
+    # Sorties réécrites à partir du cache, avec les ids et adresses actuels ; celles des références retirées partent.
+    grid_dir = args.sortie / "grilles"
+    grid_dir.mkdir(exist_ok=True)
+    written, isochrones = set(), []
+    for ref in references:
+        stored = np.load(cached_file(ref), allow_pickle=True)
+        name = f"{safe_name(ref['id'])}.json"
+        written.add(name)
+        (grid_dir / name).write_text(json.dumps({
             "reference": ref["id"], "adresse": ref["label"], "lat": ref["lat"], "lon": ref["lon"],
             "jour": day, "plage": args.plage, "vitesseMarche": args.vitesse_marche,
             # Repère de la carte du site (build_data.lonlat_to_xy) : case (r, c) centrée en
             # (origine[0] + (c + 0,5) × pas, origine[1] + (r + 0,5) × pas), rang 0 au sud.
             "lat0": build_data.LAT0, "origine": [round(min_x, 1), round(min_y, 1)], "pas": args.pas,
-            "colonnes": cols, "rangs": rows, "minutes": flat.tolist(),
+            "colonnes": cols, "rangs": rows, "minutes": stored["minutes"].tolist(),
         }, separators=(",", ":")), encoding="utf-8")
-        # Isochrones : union des cases atteintes sous chaque seuil, découpée sur la Métropole.
-        half = args.pas / 2
-        for threshold in THRESHOLDS:
-            keep = reached & (np.nan_to_num(minutes, nan=1e9) <= threshold)
-            if not keep.any():
-                continue
-            cx = min_x + (col_index[keep] + 0.5) * args.pas
-            cy = min_y + (row_index[keep] + 0.5) * args.pas
-            squares = shapely.box(cx - half, cy - half, cx + half, cy + half)
-            area = shapely.intersection(shapely.union_all(squares), land)
-            isochrones.append({"reference": ref["id"], "minutes": threshold,
-                               "km2": round(area.area / 1e6, 2), "geometry": xy_to_lonlat(area)})
-        print(f"  {ref['id']} : grille calculée en {time.time() - started:.1f} s, {int(reached.sum())} cases atteintes")
+        for threshold, wkb, km2 in zip(THRESHOLDS, stored["shapes"], stored["areas"]):
+            if len(wkb):
+                isochrones.append({"reference": ref["id"], "minutes": threshold, "km2": float(km2), "geometry": shapely.from_wkb(wkb)})
+    for stale in grid_dir.glob("*.json"):
+        if stale.name not in written:
+            stale.unlink()
     if isochrones:
         gpd.GeoDataFrame(isochrones, crs=4326).to_file(args.sortie / "isochrones.geojson", driver="GeoJSON")
+    # Grilles d'un ancien contexte (GTFS, rues ou réglages changés) : plus jamais utiles.
+    for old in grid_cache.glob("*.npz"):
+        if not old.name.startswith(grid_context):
+            old.unlink()
     print(f"Résultats dans {args.sortie}")
 
 

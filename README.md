@@ -96,6 +96,14 @@ choisit l'adresse de référence : la carte affiche alors sa heatmap et ses isoc
 selon leur temps, et le nombre de points sous chaque isochrone cochée. Un clic sur la carte donne le temps porte
 à porte depuis la référence ; déplacer le départ, ou choisir « Carte du site », revient au calcul habituel.
 
+Le calcul est incrémental : ajoutez des lignes à `references.csv` ou `points.csv` et relancez la même commande,
+seuls les nouveaux lieux sont calculés (une nouvelle référence : ses temps vers tous les points et sa grille ; un
+nouveau point : ses temps depuis toutes les références). Les adresses déjà géocodées ne sont pas recherchées à
+nouveau, et un lieu est reconnu à sa position : renommer un `id` ne coûte rien, corriger une adresse la fait
+recalculer. Ce qui est déjà calculé est gardé dans `sortie/cache/`. Tout est refait seulement si le GTFS, les rues ou
+un réglage (`--date`, `--plage`, `--vitesse-marche`, `--max-minutes`, `--pas` pour les grilles) changent ;
+`--tout-recalculer` force un calcul complet.
+
 Options utiles : `--plage 8:00-9:00` (heure de pointe), `--date AAAAMMJJ`, `--vitesse-marche 5`, `--pas 100`,
 `--sans-grille` (matrice et comptes seulement, plus rapide). Le premier lancement découpe l'extrait OSM à
 l'emprise de la Métropole et construit le réseau (quelques minutes), puis garde les deux en cache. Le GTFS est
