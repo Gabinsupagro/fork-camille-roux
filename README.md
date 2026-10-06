@@ -88,8 +88,10 @@ Résultats dans `sortie/` (non versionné) :
 - `grilles/<id>.json` : temps par case de 50 m, dans le repère de la carte du site, pour l'afficher.
 
 Pour les voir sur la carte, lancez le site en local (`python -m http.server 8000 --directory site`), puis
-« Résultats r5py › Charger… » et sélectionnez ensemble les fichiers de `sortie/grilles/`, `geocodage.csv` et
-`matrice.csv`. Les fichiers sont lus par le navigateur et ne sont envoyés nulle part. La liste qui apparaît
+« Résultats r5py › Dossier sortie… » et choisissez le dossier `sortie` : la page y lit les grilles,
+`geocodage.csv` et `matrice.csv` (et rien d'autre). « Fichiers… » permet aussi de les choisir un à un, en
+plusieurs fois si besoin : les chargements s'additionnent. Les fichiers sont lus par le navigateur et ne sont
+envoyés nulle part. La liste qui apparaît
 choisit l'adresse de référence : la carte affiche alors sa heatmap et ses isochrones r5py, les points colorés
 selon leur temps, et le nombre de points sous chaque isochrone cochée. Un clic sur la carte donne le temps porte
 à porte depuis la référence ; déplacer le départ, ou choisir « Carte du site », revient au calcul habituel.

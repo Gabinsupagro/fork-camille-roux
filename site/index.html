@@ -169,7 +169,10 @@
             <span class="control-label">Résultats r5py</span>
             <!-- Les fichiers sont lus par le navigateur : ils ne sont envoyés nulle part. -->
             <label class="button file-button" title="Grilles (grilles/*.json), geocodage.csv et matrice.csv du dossier sortie/">
-              Charger…<input id="r5Files" type="file" multiple accept=".json,.csv" />
+              Fichiers…<input id="r5Files" type="file" multiple accept=".json,.csv" />
+            </label>
+            <label class="button file-button" title="Le dossier sortie/ entier : grilles, geocodage.csv et matrice.csv y sont trouvés seuls">
+              Dossier sortie…<input id="r5Folder" type="file" webkitdirectory />
             </label>
             <select id="r5Reference" aria-label="Adresse de référence r5py" hidden></select>
           </div>
@@ -213,7 +216,7 @@
     </main>
 
     <div id="toast" class="toast" role="status" hidden></div>
-    <script type="module" src="./app.js?v=13"></script>
+    <script type="module" src="./app.js?v=14"></script>
     <!-- Cloudflare Web Analytics (sans cookie). "spa": false : les mises à jour de l'URL ne comptent pas comme des pages vues. -->
     <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "1904c17ed0624c0cab4d69ea1bacc5e7", "spa": false}'></script>
   </body>

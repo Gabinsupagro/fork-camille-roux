@@ -1101,14 +1101,14 @@ function restoreFromUrl() {
   if (to && setTo(to, null, { quiet: true }) && params.get("carte") === "arrivee") setHeatFrom("to");
 }
 
-function toast(message) {
+function toast(message, duration = 2200) {
   const element = $("toast");
   element.textContent = message;
   element.hidden = false;
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => {
     element.hidden = true;
-  }, 2200);
+  }, duration);
 }
 
 // --- Interactions sur la carte ----------------------------------------------
@@ -1328,13 +1328,14 @@ async function loadR5Files(files) {
     }
   }
   if (grids) notes.unshift(`${grids} grille${grids > 1 ? "s" : ""}`);
+  else if (!app.r5.grids.size) notes.push("aucune grille : ajoutez les fichiers .json de sortie/grilles (ou choisissez le dossier sortie)");
   fillR5Select();
   if (!app.r5.active && app.r5.grids.size) activateR5(app.r5.grids.keys().next().value);
   else if (app.r5.active) {
     updatePanel();
     requestRender();
   }
-  toast(`Chargé : ${notes.join(", ") || "rien"}`);
+  toast(`Chargé : ${notes.join(", ") || "rien"}`, 7000);
 }
 
 function fillR5Select() {
@@ -1438,11 +1439,31 @@ function drawR5Points() {
   }
 }
 
-$("r5Files").addEventListener("change", async (event) => {
-  const files = [...event.target.files];
-  event.target.value = ""; // pour pouvoir recharger les mêmes fichiers
-  if (files.length) await loadR5Files(files);
-});
+/** Dans un dossier sortie/ choisi en entier, seuls les résultats sont lus (pas l'extrait OSM ni le GTFS en cache). */
+function isR5Result(file) {
+  const path = (file.webkitRelativePath || file.name).replaceAll("\\", "/").toLowerCase();
+  const name = path.split("/").pop();
+  return (name.endsWith(".json") && path.includes("grilles/")) || name === "geocodage.csv" || name === "matrice.csv";
+}
+
+for (const id of ["r5Files", "r5Folder"]) {
+  $(id).addEventListener("change", async (event) => {
+    const all = [...event.target.files];
+    const files = id === "r5Folder" ? all.filter(isR5Result) : all;
+    event.target.value = ""; // pour pouvoir recharger les mêmes fichiers
+    if (!files.length) {
+      toast(all.length ? "Aucun résultat r5py dans ce dossier (grilles/*.json, geocodage.csv, matrice.csv)." : "Aucun fichier reçu.", 7000);
+      return;
+    }
+    toast(`Lecture de ${files.length} fichier${files.length > 1 ? "s" : ""}…`);
+    try {
+      await loadR5Files(files);
+    } catch (error) {
+      console.error(error);
+      toast(`Lecture impossible : ${error.message}`, 7000);
+    }
+  });
+}
 
 $("r5Reference").addEventListener("change", (event) => {
   if (event.target.value) {
