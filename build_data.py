@@ -42,6 +42,13 @@ SERVICE_WINDOW = (7 * 3600, 20 * 3600)
 MIN_RING_DISTANCE = 45.0
 MIN_LINE_DISTANCE = 25.0
 MIN_PARK_AREA = 20_000.0
+MIN_WATER_AREA = 15_000.0
+# Water bodies at least this large (and every lagoon) are not land: no cell of the grid is placed on them.
+WATER_MASK_AREA = 1_000_000.0
+# Neighbouring communes (coastal map): simplified more coarsely, they are only context around the metropolis.
+CONTEXT_RING_DISTANCE = 80.0
+# OSM area of the map (south, west, north, east): the land around the metropolis is kept inside it.
+OSM_BBOX = (43.45, 3.68, 43.75, 4.08)
 TRAM_ROUTE_REFS = {"1": "1", "2": "2", "3": "3", "4A": "4", "4B": "4", "5": "5"}
 
 Point = Tuple[float, float]
@@ -193,43 +200,100 @@ def extract_communes() -> Tuple[List[dict], MultiPolygon]:
     return communes, all_polygons
 
 
-def closed_way_ring(element: dict) -> Ring | None:
-    geometry = element.get("geometry") or []
-    if len(geometry) < 4:
-        return None
-    first, last = geometry[0], geometry[-1]
-    if (first["lon"], first["lat"]) != (last["lon"], last["lat"]):
-        return None
-    return [lonlat_to_xy(node["lon"], node["lat"]) for node in geometry]
+def ring_bounds(ring: Sequence[Point]) -> Tuple[float, float, float, float]:
+    xs = [x for x, _ in ring]
+    ys = [y for _, y in ring]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def way_points(geometry: Sequence[dict]) -> List[Point]:
+    return [lonlat_to_xy(node["lon"], node["lat"]) for node in geometry if node]
+
+
+def assemble_rings(ways: List[List[Point]]) -> List[Ring]:
+    """Join open ways end to end into closed rings (OSM multipolygon members)."""
+    rings: List[Ring] = []
+    pending = [list(way) for way in ways if len(way) >= 2]
+    while pending:
+        ring = pending.pop()
+        while ring[0] != ring[-1]:
+            for i, way in enumerate(pending):
+                if way[0] == ring[-1]:
+                    ring.extend(way[1:])
+                elif way[-1] == ring[-1]:
+                    ring.extend(reversed(way[:-1]))
+                elif way[-1] == ring[0]:
+                    ring[:0] = way[:-1]
+                elif way[0] == ring[0]:
+                    ring[:0] = list(reversed(way[1:]))
+                else:
+                    continue
+                pending.pop(i)
+                break
+            else:
+                break  # cut by the query bounding box: drop it
+        if ring[0] == ring[-1] and len(ring) >= 4:
+            rings.append(ring)
+    return rings
+
+
+def osm_polygons(element: dict) -> MultiPolygon:
+    """Polygons of an OSM closed way or multipolygon relation, islands (inner rings) kept as holes."""
+    if element["type"] == "way":
+        points = way_points(element.get("geometry") or [])
+        return [[points]] if len(points) >= 4 and points[0] == points[-1] else []
+    members = [m for m in element.get("members", []) if m["type"] == "way" and m.get("geometry")]
+    outers = assemble_rings([way_points(m["geometry"]) for m in members if m.get("role") != "inner"])
+    inners = assemble_rings([way_points(m["geometry"]) for m in members if m.get("role") == "inner"])
+    polygons: MultiPolygon = []
+    for outer in outers:
+        holes = [inner for inner in inners if point_in_ring(inner[0], outer)]
+        polygons.append([outer, *holes])
+    return polygons
 
 
 def extract_water_and_parks(bounds: Tuple[float, float, float, float]) -> Tuple[MultiPolygon, MultiPolygon, MultiPolygon]:
-    """Return (lagoons that are not land, other water shown on the map, parks)."""
+    """Return (water that is not land, other water shown on the map, parks)."""
     payload = load_json(DATA_DIR / "osm_water_parks.json")
     min_x, min_y, max_x, max_y = bounds
-    lagoons: MultiPolygon = []
+    masked: MultiPolygon = []
     water: MultiPolygon = []
     parks: MultiPolygon = []
     for element in payload["elements"]:
-        if element["type"] != "way":
-            continue
         tags = element.get("tags", {})
-        ring = closed_way_ring(element)
-        if not ring:
-            continue
-        xs = [x for x, _ in ring]
-        ys = [y for _, y in ring]
-        if max(xs) < min_x or min(xs) > max_x or max(ys) < min_y or min(ys) > max_y:
-            continue
-        area = abs(ring_area(ring))
-        if tags.get("natural") == "water":
-            if area < 15_000:
+        for polygon in osm_polygons(element):
+            ring_min_x, ring_min_y, ring_max_x, ring_max_y = ring_bounds(polygon[0])
+            if ring_max_x < min_x or ring_min_x > max_x or ring_max_y < min_y or ring_min_y > max_y:
                 continue
-            target = lagoons if tags.get("water") == "lagoon" else water
-            target.append([simplify_ring(ring, MIN_RING_DISTANCE if area > 1e6 else 12.0)])
-        elif tags.get("leisure") == "park" and area >= MIN_PARK_AREA:
-            parks.append([simplify_ring(ring, 15.0)])
-    return lagoons, water, parks
+            area = abs(ring_area(polygon[0]))
+            if tags.get("natural") == "water":
+                if area < MIN_WATER_AREA:
+                    continue
+                tolerance = MIN_RING_DISTANCE if area > 1e6 else 12.0
+                simplified = [simplify_ring(ring, tolerance) for ring in polygon]
+                target = masked if tags.get("water") == "lagoon" or area >= WATER_MASK_AREA else water
+                target.append(simplified)
+            elif tags.get("leisure") == "park" and area >= MIN_PARK_AREA:
+                parks.append([simplify_ring(ring, 15.0) for ring in polygon])
+    return masked, water, parks
+
+
+def extract_context() -> MultiPolygon:
+    """Land around the metropolis (neighbouring communes), within the OSM area of the map: the map draws it as land
+    so that what remains uncovered reads as sea. Empty, so no sea, when data/context.geojson is missing."""
+    path = DATA_DIR / "context.geojson"
+    if not path.exists():
+        return []
+    south, west, north, east = OSM_BBOX
+    min_x, min_y = lonlat_to_xy(west, south)
+    max_x, max_y = lonlat_to_xy(east, north)
+    kept: MultiPolygon = []
+    for feature in load_json(path)["features"]:
+        for polygon in coords_to_polygons(feature["geometry"], CONTEXT_RING_DISTANCE):
+            ring_min_x, ring_min_y, ring_max_x, ring_max_y = ring_bounds(polygon[0])
+            if ring_max_x >= min_x and ring_min_x <= max_x and ring_max_y >= min_y and ring_min_y <= max_y:
+                kept.append(polygon)
+    return kept
 
 
 # --- GTFS -------------------------------------------------------------------
@@ -481,7 +545,8 @@ def main() -> None:
     bounds = multipolygon_bounds(land, LAND_PAD_METERS)
     cols = round((bounds[2] - bounds[0]) / GRID_CELL_METERS)
     rows = round((bounds[3] - bounds[1]) / GRID_CELL_METERS)
-    lagoons, water, parks = extract_water_and_parks(bounds)
+    masked_water, water, parks = extract_water_and_parks(bounds)
+    context = extract_context()
 
     reference_date, complexes, edges, waits, route_info = extract_network()
     route_states, station_states, adjacency = build_graph(complexes, edges, waits)
@@ -504,7 +569,7 @@ def main() -> None:
         max(x for x, _ in tram_points) + VIEW_PAD_METERS,
         max(y for _, y in tram_points) + VIEW_PAD_METERS,
     )
-    cells, mask = build_grid(land, lagoons, stations, bounds, cols, rows)
+    cells, mask = build_grid(land, masked_water, stations, bounds, cols, rows)
 
     output = {
         "meta": {
@@ -519,9 +584,11 @@ def main() -> None:
             "originStationCount": ORIGIN_NEAREST_STATIONS,
             "cellNearestStations": CELL_NEAREST_STATIONS,
             "defaultBoardWait": DEFAULT_BOARD_WAIT,
+            "sea": bool(context),
         },
+        "context": [serialize_polygon(polygon) for polygon in context],
         "boroughs": communes,
-        "water": [serialize_polygon(polygon) for polygon in lagoons + water],
+        "water": [serialize_polygon(polygon) for polygon in masked_water + water],
         "parks": [serialize_polygon(polygon) for polygon in parks],
         "routes": routes,
         "routeInfo": route_info,

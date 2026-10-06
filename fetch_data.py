@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 import urllib.parse
 import urllib.request
@@ -20,6 +21,8 @@ OVERPASS_URLS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
 ]
+# Communes around the metropolis (Hérault, Gard): the land beyond its borders, so that what stays uncovered is the sea.
+CONTEXT_DEPARTMENTS = ["34", "30"]
 TRAM_QUERY = '[out:json][timeout:110];relation["route"="tram"](43.50,3.70,43.72,4.05);out geom;'
 WATER_PARKS_QUERY = (
     "[out:json][timeout:110];("
@@ -52,12 +55,29 @@ def overpass(query: str) -> bytes:
     raise RuntimeError("Overpass unavailable")
 
 
+def fetch_context() -> None:
+    """Land around the metropolis: whatever the map leaves uncovered is drawn as sea."""
+    print("Communes voisines (mer)…")
+    features = []
+    for code in CONTEXT_DEPARTMENTS:
+        url = f"https://geo.api.gouv.fr/departements/{code}/communes?fields=nom,code&format=geojson&geometry=contour"
+        features += json.loads(download(url))["features"]
+    (DATA_DIR / "context.geojson").write_text(
+        json.dumps({"type": "FeatureCollection", "features": features}), encoding="utf-8"
+    )
+
+
 def main() -> None:
     DATA_DIR.mkdir(exist_ok=True)
+    if "--context-only" in sys.argv:
+        # Only the neighbouring communes (sea): leaves the GTFS and the OSM files untouched.
+        fetch_context()
+        return
     print("GTFS TaM…")
     (DATA_DIR / "gtfs_tam.zip").write_bytes(download(GTFS_URL))
     print("Communes de la Métropole…")
     (DATA_DIR / "communes_3m.geojson").write_bytes(download(COMMUNES_URL))
+    fetch_context()
     print("Tracés tram (OSM)…")
     (DATA_DIR / "tram_osm.json").write_bytes(overpass(TRAM_QUERY))
     print("Étangs et parcs (OSM)…")

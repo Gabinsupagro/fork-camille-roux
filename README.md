@@ -27,6 +27,9 @@ Puis ouvrir [http://localhost:8000](http://localhost:8000).
 - GTFS théorique du réseau TaM ([transport.data.gouv.fr](https://transport.data.gouv.fr/datasets/reseau-urbain-tam))
 - Tracés des lignes de tram, étangs et parcs : © contributeurs OpenStreetMap (ODbL), via Overpass
 - Contours des 31 communes de Montpellier Méditerranée Métropole ([geo.api.gouv.fr](https://geo.api.gouv.fr/))
+- Communes voisines de l'Hérault et du Gard ([geo.api.gouv.fr](https://geo.api.gouv.fr/)), dessinées en terre autour de la
+  Métropole : ce qui reste découvert est la mer, en bleu. Fichier `data/context.geojson`, que
+  `python3 fetch_data.py --context-only` télécharge seul (sans lui, la carte se construit sans mer)
 - Fond de carte : © contributeurs OpenStreetMap, tuiles du serveur officiel (`tile.openstreetmap.org`, sans clé),
   reprojetées dans le repère local du site (voir `site/basemap.js`). Paramètres d'URL : `fond=0` (sans fond),
   `fond=carto` (CARTO Voyager, nécessite une clé d'API), `opacite=20..100`

@@ -3,7 +3,7 @@
 
 import { createBasemap, DEFAULT_PROVIDER, PROVIDERS } from "./basemap.js?v=2";
 
-const DATA_URL = new URL("./data/commute_map_data.json?v=5", import.meta.url);
+const DATA_URL = new URL("./data/commute_map_data.json?v=6", import.meta.url);
 const GEOCODER_URL = "https://api-adresse.data.gouv.fr/search/";
 
 const DEFAULT_FROM = { lat: 43.60853, lon: 3.8799, label: "Place de la Comédie" };
@@ -19,6 +19,7 @@ const CLICK_SLOP = { mouse: 5, touch: 12 };
 const MIN_ZOOM_FACTOR = 0.5;
 const MAX_ZOOM_FACTOR = 14;
 const STOP_LABEL_SCALE = 0.13; // pixels par mètre au-delà desquels on nomme les arrêts
+const TRAM_NAME_RADIUS = 400; // mètres : en deçà, un lieu est nommé d'après la station de tram proche
 
 // Du plus proche (vert) au plus lointain (rouge) ; au-delà du max : gris.
 const PALETTE = [
@@ -36,6 +37,7 @@ const HEAT_ALPHA_BASEMAP = 0.6;
 const HEAT_UPSAMPLE = 3;
 const LUT_SIZE = 512;
 const NEIGHBOURS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+const WATER_BRIDGE_CELLS = 4; // cases de 200 m : de quoi enjamber un étang pour les isochrones
 
 const COLORS = {
   background: "#f1efe9",
@@ -333,10 +335,10 @@ function buildItinerary(solution, point) {
     const to = chain[i];
     if (graph.route[from] === graph.route[to] && graph.station[from] !== graph.station[to]) continue;
     closeLeg(from);
-    if (graph.station[from] !== graph.station[to]) {
-      const meters = hypot(data.stations[graph.station[from]].point, data.stations[graph.station[to]].point);
-      steps.push({ kind: "walk", text: `Correspondance à pied vers ${name(to)}`, minutes: walkMinutes(meters) });
-    }
+    // Marche et quai : tout le temps de la correspondance, sauf l'attente de la ligne suivante (affichée avec elle).
+    const minutes = solution.dist[to] - solution.dist[from] - graph.wait[to];
+    const text = graph.station[from] === graph.station[to] ? `Correspondance à ${name(to)}` : `Correspondance à pied vers ${name(to)}`;
+    steps.push({ kind: "walk", text, minutes });
     legStart = to;
   }
   closeLeg(chain[chain.length - 1]);
@@ -345,6 +347,33 @@ function buildItinerary(solution, point) {
 }
 
 // --- Grille des temps ---------------------------------------------------------
+
+/** Comble les cases sans valeur (eau, hors carte) avec la moyenne de leurs voisines, `passes` fois. */
+function fillGaps(values, cols, rows, passes) {
+  const filled = Float32Array.from(values);
+  for (let pass = 0; pass < passes; pass += 1) {
+    const source = Float32Array.from(filled);
+    for (let index = 0; index < source.length; index += 1) {
+      if (!Number.isNaN(source[index])) continue;
+      const row = Math.floor(index / cols);
+      const col = index % cols;
+      let sum = 0;
+      let count = 0;
+      for (const [dr, dc] of NEIGHBOURS) {
+        const r = row + dr;
+        const c = col + dc;
+        if (r < 0 || c < 0 || r >= rows || c >= cols) continue;
+        const value = source[r * cols + c];
+        if (!Number.isNaN(value)) {
+          sum += value;
+          count += 1;
+        }
+      }
+      if (count) filled[index] = sum / count;
+    }
+  }
+  return filled;
+}
 
 function computeGrid(solution) {
   const { cells, meta } = app.data;
@@ -358,7 +387,10 @@ function computeGrid(solution) {
     }
     times[cell.row * cols + cell.col] = best;
   }
-  return { times, smooth: smoothGrid(times, cols, rows), cols, rows, contours: {} };
+  // Les isochrones enjambent les étangs (comblés avec les valeurs des rives) au lieu d'en faire le tour ;
+  // elles sont ensuite découpées sur la terre ferme au dessin.
+  const bridged = fillGaps(times, cols, rows, WATER_BRIDGE_CELLS);
+  return { times, smooth: smoothGrid(bridged, cols, rows), cols, rows, contours: {} };
 }
 
 /** Moyenne 3×3 limitée à la terre ferme, pour des isochrones moins crénelées. */
@@ -399,28 +431,7 @@ function paintHeat(grid, { fast = false } = {}) {
   const image = heatCtx.createImageData(heat.width, heat.height);
 
   // Étend les valeurs d'un cran hors de la terre pour que le lissage ne fonce pas les côtes.
-  const filled = Float32Array.from(times);
-  for (let pass = 0; pass < 2; pass += 1) {
-    const source = Float32Array.from(filled);
-    for (let index = 0; index < source.length; index += 1) {
-      if (!Number.isNaN(source[index])) continue;
-      const row = Math.floor(index / cols);
-      const col = index % cols;
-      let sum = 0;
-      let count = 0;
-      for (const [dr, dc] of NEIGHBOURS) {
-        const r = row + dr;
-        const c = col + dc;
-        if (r < 0 || c < 0 || r >= rows || c >= cols) continue;
-        const value = source[r * cols + c];
-        if (!Number.isNaN(value)) {
-          sum += value;
-          count += 1;
-        }
-      }
-      if (count) filled[index] = sum / count;
-    }
-  }
+  const filled = fillGaps(times, cols, rows, 2);
 
   // Table de couleurs précalculée : t ∈ [0, 1 + BEYOND_FADE] découpé en LUT_SIZE pas.
   const lutMax = 1 + BEYOND_FADE;
@@ -532,8 +543,14 @@ function buildPaths(data) {
   }
   return {
     land: polygonsPath(data.boroughs.flatMap((commune) => commune.polygons)),
-    water: polygonsPath(data.water),
-    parks: polygonsPath(data.parks),
+    // Terres voisines de la Métropole : ce qui reste découvert autour est la mer.
+    context: polygonsPath(data.context ?? []),
+    // Un chemin par polygone, rempli en « evenodd » : les îles (trous) restent de la terre ferme,
+    // sans que deux plans d'eau qui se chevauchent s'annulent.
+    water: data.water.map((polygon) => polygonsPath([polygon])),
+    parks: data.parks.map((polygon) => polygonsPath([polygon])),
+    // Tous les plans d'eau en un seul chemin, pour y remettre le fond de carte (découpe « evenodd » : îles exclues).
+    waterClip: polygonsPath(data.water),
     communeLines,
     routes: [...routes.values()].reverse(),
   };
@@ -633,6 +650,9 @@ function drawIsochrones() {
       path.moveTo(a[0] - ox, a[1] - oy);
       path.lineTo(b[0] - ox, b[1] - oy);
     }
+    // Les courbes enjambent les étangs : on ne trace que ce qui est sur la terre ferme de la Métropole.
+    ctx.save();
+    ctx.clip(app.paths.land, "evenodd");
     ctx.lineCap = "round";
     ctx.strokeStyle = "rgba(255,255,255,0.8)";
     ctx.lineWidth = 4.5 * px;
@@ -640,19 +660,23 @@ function drawIsochrones() {
     ctx.strokeStyle = COLORS.contour;
     ctx.lineWidth = (threshold >= 30 ? 2 : 1.4) * px;
     ctx.stroke(path);
+    ctx.restore();
 
     // Étiquette sur le point le plus au nord de la courbe encore visible, à l'écart des marqueurs
-    // et des étiquettes déjà posées.
+    // et des étiquettes déjà posées, et sur la terre ferme.
     const avoid = [app.from, app.to].filter(Boolean).map((place) => project(place.point));
     avoid.push(...labels.map((label) => label.at));
-    let best = null;
+    const candidates = [];
     for (const [a, b] of segments) {
-      const [x, y] = project([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
+      const world = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      const [x, y] = project(world);
       if (x < 60 || x > app.size.width - 60 || y < 24 || y > app.size.height - 24) continue;
       if (avoid.some(([ax, ay]) => Math.abs(x - ax) < 70 && y - ay > -60 && y - ay < 40)) continue;
-      if (!best || y < best[1]) best = [x, y];
+      candidates.push({ world, at: [x, y] });
     }
-    if (best) labels.push({ text: `${threshold} min`, at: best });
+    candidates.sort((p, q) => p.at[1] - q.at[1]);
+    const best = candidates.find((candidate) => isOnLand(candidate.world));
+    if (best) labels.push({ text: `${threshold} min`, at: best.at });
   }
   useScreenTransform();
   ctx.textAlign = "center";
@@ -741,12 +765,18 @@ function render() {
   const { width, height, dpr } = app.size;
   const px = 1 / app.view.scale;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = COLORS.background;
+  // Côte : le fond est la mer, et les terres voisines de la Métropole sont dessinées par-dessus.
+  const sea = app.data.meta.sea;
+  ctx.fillStyle = sea ? COLORS.water : COLORS.background;
   ctx.fillRect(0, 0, width, height);
 
   // Le fond plat (terre grise) reste dessiné d'abord : il sert de repli tant que les tuiles arrivent,
   // ou si elles sont bloquées.
   useWorldTransform();
+  if (sea) {
+    ctx.fillStyle = COLORS.background;
+    ctx.fill(app.paths.context);
+  }
   ctx.fillStyle = COLORS.land;
   ctx.fill(app.paths.land, "evenodd");
 
@@ -773,7 +803,7 @@ function render() {
   if (tilesShown) {
     // La carte des contours déborde sur les étangs : on y remet le fond de carte, sans couleur par-dessus.
     ctx.save();
-    ctx.clip(app.paths.water);
+    ctx.clip(app.paths.waterClip, "evenodd");
     useScreenTransform();
     drawTiles("base");
     ctx.restore();
@@ -781,9 +811,9 @@ function render() {
     ctx.setLineDash([6 * px, 4 * px]);
   } else {
     ctx.fillStyle = COLORS.park;
-    ctx.fill(app.paths.parks);
+    for (const park of app.paths.parks) ctx.fill(park, "evenodd");
     ctx.fillStyle = COLORS.water;
-    ctx.fill(app.paths.water);
+    for (const water of app.paths.water) ctx.fill(water, "evenodd");
     ctx.strokeStyle = COLORS.communeLine;
   }
   ctx.lineWidth = 1.1 * px;
@@ -844,17 +874,24 @@ function resize() {
 
 // --- État, panneau et URL -------------------------------------------------------
 
+/** Nom de lieu : la station de tram proche si elle existe (plus parlante qu'un arrêt de bus), sinon l'arrêt le plus proche. */
 function nearestStopName(point) {
   let best = null;
   let bestDistance = Infinity;
+  let tram = null;
+  let tramDistance = Infinity;
   for (const station of app.data.stations) {
     const d = hypot(point, station.point);
     if (d < bestDistance) {
       bestDistance = d;
       best = station.name;
     }
+    if (station.tram && d < tramDistance) {
+      tramDistance = d;
+      tram = station.name;
+    }
   }
-  return best;
+  return tramDistance <= TRAM_NAME_RADIUS ? tram : best;
 }
 
 function describePlace(point) {
@@ -1232,7 +1269,14 @@ $("locate").addEventListener("click", () => {
     ({ coords }) => {
       if (!setFrom(toWorld(coords.latitude, coords.longitude), "Ma position")) toast("Vous êtes hors de la Métropole.");
     },
-    () => toast("Impossible d'obtenir votre position."),
+    (error) =>
+      toast(
+        error.code === error.PERMISSION_DENIED
+          ? "Position refusée : autorisez la localisation, ou cherchez une adresse."
+          : "Impossible d'obtenir votre position : cherchez plutôt une adresse.",
+      ),
+    // Sans délai maximal, certains navigateurs intégrés (X, Reddit…) n'appellent jamais aucun des deux rappels.
+    { timeout: 10000, maximumAge: 60000 },
   );
 });
 
