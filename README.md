@@ -1,14 +1,14 @@
-# Montpellier à portée de tram
+# Montpellier porte à porte
 
-Carte interactive des temps de trajet en **tram** (et, en option, en **bus**) sur le réseau TaM de Montpellier.
-
-👉 **https://tram.camilleroux.com/**
+Carte interactive des temps de trajet dans la Métropole de Montpellier : en **tram** et **bus** (réseau TaM) dans le
+navigateur, et porte à porte à pied et en transports en commun, à **vélo** ou en **voiture** à partir de calculs r5py
+faits en local.
 
 Idée originale : le [NYC Transit Time Cartogram](https://castrio.me/nyc/) d'Anthony Castrio, puis sa
 [déclinaison parisienne](https://github.com/JulesGrandin/paris-temps-transport) par Jules Grandin.
 
 Fonctionnalités : heatmap et isochrones depuis un départ déplaçable, arrivée au clic avec itinéraire détaillé
-(lignes, correspondances, marche), recherche d'adresse (Base Adresse Nationale) ou de station, tram seul ou
+(lignes, correspondances, marche), nom et lignes d'un arrêt au survol, recherche d'adresse (Base Adresse Nationale) ou de station, tram seul ou
 tram + bus, déplacement et zoom de la carte, lien de partage, fond de carte OpenStreetMap (désactivable, avec
 opacité des couleurs réglable).
 

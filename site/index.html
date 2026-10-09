@@ -3,87 +3,35 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Montpellier à portée de tram · Temps de trajet en tram TaM</title>
+    <title>Montpellier porte à porte · Temps de trajet dans la Métropole</title>
     <meta
       name="description"
-      content="Carte des temps de trajet en tram à Montpellier : choisissez un départ, toute la Métropole se colore selon le temps qu'il faut pour y aller (réseau TaM)."
+      content="Temps de trajet dans la Métropole de Montpellier : en tram et bus sur la carte, et porte à porte à pied et en transports en commun, à vélo ou en voiture à partir de calculs r5py faits en local."
     />
-    <script>
-      // Anciens liens github.io : on renvoie vers le domaine du site en gardant départ et arrivée.
-      if (location.hostname.endsWith("github.io")) location.replace("https://tram.camilleroux.com/" + location.search);
-    </script>
-    <link rel="canonical" href="https://tram.camilleroux.com/" />
     <meta name="theme-color" content="#3aa70b" />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="./favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
 
-    <meta name="author" content="Camille Roux" />
-    <meta property="og:type" content="website" />
-    <meta property="article:author" content="https://www.camilleroux.com/" />
-    <meta property="article:published_time" content="2026-10-04T08:00:00+02:00" />
-    <meta property="og:locale" content="fr_FR" />
-    <meta property="og:site_name" content="Montpellier à portée de tram" />
-    <meta property="og:title" content="Montpellier à portée de tram" />
-    <meta property="og:description" content="Montpellier redessiné par le temps de trajet en tram : choisissez un départ, la carte se colore selon le temps qu'il faut pour aller partout ailleurs." />
-    <meta property="og:url" content="https://tram.camilleroux.com/" />
-    <meta property="og:image" content="https://tram.camilleroux.com/og-image.jpg?v=2" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Carte de Montpellier colorée selon le temps de trajet en tram depuis la place de la Comédie, avec les isochrones 15 et 30 minutes." />
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Montpellier à portée de tram" />
-    <meta name="twitter:description" content="Montpellier redessiné par le temps de trajet en tram : choisissez un départ, la carte se colore selon le temps qu'il faut pour aller partout ailleurs." />
-    <meta name="twitter:image" content="https://tram.camilleroux.com/og-image.jpg?v=2" />
-
-    <script type="application/ld+json">
-    {
-      "@context": "https://schema.org",
-      "@type": "WebApplication",
-      "name": "Montpellier à portée de tram",
-      "url": "https://tram.camilleroux.com/",
-      "description": "Carte des temps de trajet en tram à Montpellier : choisissez un départ, toute la Métropole se colore selon le temps qu'il faut pour y aller (réseau TaM).",
-      "inLanguage": "fr",
-      "applicationCategory": "TravelApplication",
-      "operatingSystem": "Web",
-      "isAccessibleForFree": true,
-      "image": "https://tram.camilleroux.com/og-image.jpg?v=2",
-      "author": {
-        "@type": "Person",
-        "name": "Camille Roux",
-        "url": "https://www.camilleroux.com/"
-      },
-      "spatialCoverage": {
-        "@type": "Place",
-        "name": "Montpellier Méditerranée Métropole"
-      },
-      "isBasedOn": [
-        "https://castrio.me/nyc/",
-        "https://julesgrandin.github.io/paris-temps-transport/"
-      ],
-      "datePublished": "2026-10-04"
-    }
-    </script>
-
-    <link rel="stylesheet" href="./styles.css?v=9" />
+    <link rel="stylesheet" href="./styles.css?v=10" />
   </head>
   <body>
     <header class="topbar">
       <nav class="topbar-inner">
         <a class="brand" href="./">
-          Montpellier à portée de tram
+          Montpellier porte à porte
         </a>
-        <a class="topbar-link" href="https://www.camilleroux.com/" rel="noopener">camilleroux.com</a>
       </nav>
     </header>
 
     <main class="page">
       <section class="hero">
         <span class="chip">📍 Montpellier, France</span>
-        <h1>Montpellier à portée de&nbsp;tram</h1>
+        <h1>Montpellier porte à&nbsp;porte</h1>
         <p class="lede">
-          La ville redessinée par le temps qu'il faut pour y aller en tram. Choisissez un départ&nbsp;: la carte se colore
-          selon le temps de trajet vers chaque point de la Métropole.
+          Combien de temps pour rejoindre un lieu de la Métropole&nbsp;? Choisissez un départ&nbsp;: la carte se colore
+          selon le temps de trajet en tram et bus. Chargez vos résultats r5py pour des temps porte à porte à pied et en
+          transports en commun, à vélo ou en voiture.
         </p>
         <form id="searchForm" class="search" role="search" autocomplete="off">
           <label class="visually-hidden" for="searchInput">Adresse de départ</label>
@@ -191,34 +139,82 @@
       <section class="notes">
         <h2>Comment c'est calculé</h2>
         <p>
-          Les temps viennent des horaires théoriques du réseau TaM pour un jour de semaine ordinaire, entre 7&nbsp;h et
-          20&nbsp;h&nbsp;: durée prévue entre chaque arrêt, attente égale à la moitié de l'intervalle entre deux passages,
-          marche à pied jusqu'à l'arrêt et pénalité de correspondance. Le bus est proposé en option. Pas de temps réel ni
-          de perturbations&nbsp;: c'est une carte de la ville «&nbsp;sur le papier&nbsp;».
+          <strong>Carte du site</strong> (calculée dans le navigateur)&nbsp;: horaires théoriques TaM d'un jour de semaine
+          ordinaire, entre 7&nbsp;h et 20&nbsp;h. Durée médiane entre deux arrêts, attente égale à la moitié de
+          l'intervalle entre deux passages, marche à 4,5&nbsp;km/h à vol d'oiseau jusqu'aux arrêts, pénalité de
+          correspondance. Bus en option, lignes sur réservation exclues. Pas de temps réel ni de perturbations.
         </p>
         <p>
-          Glissez le marqueur vert pour changer de départ, cliquez n'importe où pour poser une arrivée (glissez-la pour centrer la carte sur elle, double-cliquez pour la retirer), faites glisser la
-          carte pour la déplacer et utilisez la molette pour zoomer.
+          <strong>Résultats r5py</strong> (calculés sur votre ordinateur avec <code>r5_isochrones.py</code>)&nbsp;: temps
+          porte à porte entre chaque adresse de référence et chaque point, en suivant les rues OpenStreetMap, et grille de
+          50&nbsp;m pour les isochrones.
+        </p>
+        <ul>
+          <li>
+            <strong>Marche + transports en commun</strong>&nbsp;: médiane des temps pour des départs étalés de 7&nbsp;h à
+            20&nbsp;h, attente comprise, marche à 4,5&nbsp;km/h, sans les lignes sur réservation.
+          </li>
+          <li>
+            <strong>Vélo</strong>&nbsp;: 12&nbsp;km/h sur les rues ouvertes aux vélos ; sur les axes au trafic le plus
+            stressant, le vélo est poussé à pied ou contourne ; + 3&nbsp;min pour sortir, garer son vélo et marcher.
+          </li>
+          <li>
+            <strong>Voiture</strong>&nbsp;: circulation fluide, vitesses tirées d'OpenStreetMap ; + 5&nbsp;min pour rejoindre
+            sa voiture, se garer et marcher ; seulement pour les références avec parking.
+          </li>
+        </ul>
+        <p>
+          Les fichiers de résultats sont lus par le navigateur et ne sont envoyés nulle part.
+        </p>
+        <p>
+          Glissez le marqueur vert pour changer de départ, cliquez n'importe où pour poser une arrivée (glissez-la pour
+          centrer la carte sur elle, double-cliquez pour la retirer), survolez un arrêt pour voir son nom et ses lignes,
+          faites glisser la carte pour la déplacer et utilisez la molette pour zoomer.
         </p>
         <h2>Crédits</h2>
         <p>
           Idée originale&nbsp;: le <a href="https://castrio.me/nyc/">NYC Transit Time Cartogram</a> d'Anthony Castrio,
           adapté ensuite à Paris par Jules Grandin
-          (<a href="https://julesgrandin.github.io/paris-temps-transport/">C'est encore loin&nbsp;?</a>). Cette version
-          montpelliéraine est réalisée par <a href="https://www.camilleroux.com/">Camille Roux</a>.
+          (<a href="https://julesgrandin.github.io/paris-temps-transport/">C'est encore loin&nbsp;?</a>).
         </p>
+        <p>Données&nbsp;:</p>
+        <ul>
+          <li>
+            horaires et arrêts&nbsp;: <a href="https://transport.data.gouv.fr/datasets/reseau-urbain-tam">GTFS TaM</a>
+            (Montpellier Méditerranée Métropole)&nbsp;;
+          </li>
+          <li>
+            tracés des lignes, étangs, parcs, réseau de rues des calculs r5py et fond de carte&nbsp;: ©
+            <a href="https://www.openstreetmap.org/copyright">contributeurs OpenStreetMap</a> (ODbL), extrait
+            <a href="https://download.geofabrik.de/europe/france/languedoc-roussillon.html">Geofabrik</a>&nbsp;;
+          </li>
+          <li>
+            contours des communes de la Métropole et des communes voisines&nbsp;:
+            <a href="https://geo.api.gouv.fr/">geo.api.gouv.fr</a>&nbsp;;
+          </li>
+          <li>
+            recherche d'adresse et géocodage local des adresses r5py&nbsp;:
+            <a href="https://adresse.data.gouv.fr/">Base Adresse Nationale</a>&nbsp;;
+          </li>
+          <li>
+            usage de la voiture pour faire ses courses&nbsp;:
+            <a href="https://data.montpellier3m.fr/dataset/enquete-menages-deplacements-archive">Enquête Ménages
+            Déplacements 2014</a> (Montpellier Méditerranée Métropole, ODbL)&nbsp;;
+          </li>
+          <li>
+            motorisation des ménages&nbsp;: <a href="https://www.insee.fr/fr/statistiques/8647012">recensement de la
+            population 2022</a> (INSEE) et <a href="https://geoservices.ign.fr/contoursiris">contours IRIS</a> (IGN).
+          </li>
+        </ul>
         <p>
-          Données&nbsp;: <a href="https://transport.data.gouv.fr/datasets/reseau-urbain-tam">GTFS TaM</a>
-          (Montpellier Méditerranée Métropole), tracés et étangs ©
-          <a href="https://www.openstreetmap.org/copyright">contributeurs OpenStreetMap</a>,
-          <a href="https://geo.api.gouv.fr/">contours communaux</a>, recherche d'adresse via la
-          <a href="https://adresse.data.gouv.fr/">Base Adresse Nationale</a>. Fond de carte&nbsp;: ©
-          <a href="https://www.openstreetmap.org/copyright">contributeurs OpenStreetMap</a>.
+          Calcul des temps porte à porte&nbsp;: <a href="https://r5py.readthedocs.io/">r5py</a> et le moteur
+          <a href="https://github.com/conveyal/r5">R5</a> de Conveyal. Police
+          <a href="https://rsms.me/inter/">Inter</a> (SIL Open Font License), hébergée avec le site.
         </p>
       </section>
     </main>
 
     <div id="toast" class="toast" role="status" hidden></div>
-    <script type="module" src="./app.js?v=19"></script>
+    <script type="module" src="./app.js?v=20"></script>
   </body>
 </html>

@@ -670,6 +670,24 @@ output {
   margin: 0 0 12px;
 }
 
+.notes ul {
+  margin: 0 0 12px;
+  padding-left: 1.2em;
+}
+
+.notes li {
+  margin-bottom: 4px;
+}
+
+.notes strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.notes code {
+  font-size: 0.9em;
+}
+
 .toast {
   position: fixed;
   left: 50%;

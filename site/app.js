@@ -15,10 +15,11 @@ const REACH_MINUTES = 30;
 const SEED_STATIONS = 8;
 // Au doigt, on vise moins précisément et un tap bouge souvent de quelques pixels.
 const MARKER_HIT_RADIUS = { mouse: 18, touch: 30 };
+const STOP_HOVER_RADIUS = 9; // pixels : distance de survol d'un arrêt
 const CLICK_SLOP = { mouse: 5, touch: 12 };
 const MIN_ZOOM_FACTOR = 0.5;
 const MAX_ZOOM_FACTOR = 14;
-const STOP_LABEL_SCALE = 0.13; // pixels par mètre au-delà desquels on nomme les arrêts
+const STOP_LABEL_SCALE = 0.13; // pixels par mètre au-delà desquels on nomme les points r5py
 const TRAM_NAME_RADIUS = 400; // mètres : en deçà, un lieu est nommé d'après la station de tram proche
 
 // Du plus proche (vert) au plus lointain (rouge) ; au-delà du max : gris.
@@ -80,6 +81,7 @@ const app = {
   // Résultats r5py chargés depuis des fichiers locaux : grilles par référence, points, matrice.
   // grids : clé « référence|mode » (mode tc = marche + transports en commun, voiture, velo) ; refs : une entrée par référence.
   r5: { grids: new Map(), refs: new Map(), points: [], matrix: new Map(), active: null, mode: "tc", grid: null },
+  hoverStop: null, // arrêt survolé (indice dans data.stations)
   drag: null,
   pointers: new Map(),
   frameRequested: false,
@@ -702,38 +704,55 @@ function drawIsochrones() {
   }
 }
 
+/** Arrêt visible le plus proche d'un point de l'écran (tram, et bus s'ils sont affichés), ou null. */
+function stopAt(screen) {
+  let best = null;
+  let bestDistance = STOP_HOVER_RADIUS;
+  app.data.stations.forEach((station, index) => {
+    if (!station.tram && !app.includeBus) return;
+    const distance = hypot(screen, project(station.point));
+    if (distance < bestDistance) {
+      best = index;
+      bestDistance = distance;
+    }
+  });
+  return best;
+}
+
+function stopLines(station) {
+  const names = (mode) =>
+    station.routes
+      .map((id) => app.data.routeInfo[id])
+      .filter((info) => info?.mode === mode)
+      .map((info) => info.name)
+      .sort((x, y) => x.localeCompare(y, "fr", { numeric: true }));
+  const parts = [];
+  const tram = names("tram");
+  if (tram.length) parts.push(`Tram ${tram.join(", ")}`);
+  const bus = app.includeBus ? names("bus") : [];
+  if (bus.length) parts.push(`Bus ${bus.join(", ")}`);
+  return parts.join(" · ");
+}
+
+/** Les arrêts ne sont dessinés qu'au survol : un seul à la fois, avec son nom et ses lignes. */
 function drawStops() {
-  const { stations } = app.data;
-  if (app.includeBus) {
-    ctx.fillStyle = "rgba(60, 60, 60, 0.45)";
-    for (const station of stations) {
-      if (station.tram) continue;
-      const [x, y] = project(station.point);
-      ctx.fillRect(x - 1, y - 1, 2, 2);
-    }
-  }
-  const radius = app.view.scale > STOP_LABEL_SCALE ? 3.2 : 2.2;
-  for (const station of stations) {
-    if (!station.tram) continue;
-    const [x, y] = project(station.point);
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fillStyle = "#fff";
-    ctx.fill();
-    ctx.lineWidth = 1.2;
-    ctx.strokeStyle = "#333";
-    ctx.stroke();
-  }
-  if (app.view.scale > STOP_LABEL_SCALE) {
-    ctx.textAlign = "left";
-    ctx.textBaseline = "middle";
-    for (const station of stations) {
-      if (!station.tram) continue;
-      const [x, y] = project(station.point);
-      if (x < -50 || y < -20 || x > app.size.width + 50 || y > app.size.height + 20) continue;
-      drawHaloText(station.name, x + 6, y, { font: "500 11px Inter, sans-serif", color: "#333" });
-    }
-  }
+  const index = app.hoverStop;
+  if (index === null || index === undefined) return;
+  const station = app.data.stations[index];
+  if (!station || (!station.tram && !app.includeBus)) return;
+  const [x, y] = project(station.point);
+  ctx.beginPath();
+  ctx.arc(x, y, 4.5, 0, Math.PI * 2);
+  ctx.fillStyle = "#fff";
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "#333";
+  ctx.stroke();
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  const lines = stopLines(station);
+  drawHaloText(station.name, x + 9, lines ? y - 7 : y, { font: "600 12px Inter, sans-serif", color: "#222" });
+  if (lines) drawHaloText(lines, x + 9, y + 8, { font: "500 11px Inter, sans-serif", color: "#555" });
 }
 
 function drawCommuneNames() {
@@ -865,8 +884,8 @@ function render() {
   useScreenTransform();
   // Avec les noms du fond de carte, ceux des communes feraient doublon.
   if (!(tilesShown && app.basemap.hasLabels)) drawCommuneNames();
-  drawStops();
   drawR5Points();
+  drawStops();
   if (app.to) {
     let minutes = app.solution ? formatMinutes(travelTo(app.solution, app.to.point).minutes) : null;
     if (app.r5.active) {
@@ -1177,8 +1196,10 @@ canvas.addEventListener("pointermove", (event) => {
 
   if (!drag) {
     canvas.classList.toggle("over-marker", Boolean(markerAt(screen)));
+    if (event.pointerType === "mouse") setHoverStop(stopAt(screen));
     return;
   }
+  setHoverStop(null);
   if (drag.kind === "pinch" && app.pointers.size === 2) {
     const [a, b] = [...app.pointers.values()];
     const distance = hypot(a, b);
@@ -1198,6 +1219,14 @@ canvas.addEventListener("pointermove", (event) => {
     requestRender();
   }
 });
+
+function setHoverStop(index) {
+  if (index === app.hoverStop) return;
+  app.hoverStop = index;
+  requestRender();
+}
+
+canvas.addEventListener("pointerleave", () => setHoverStop(null));
 
 function endPointer(event) {
   app.pointers.delete(event.pointerId);
