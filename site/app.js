@@ -1307,6 +1307,22 @@ function r5PointTime(point) {
   return r5TimeAt(point.point);
 }
 
+/** Grille compressée par r5_isochrones.py (« u8-zlib-base64 » ou « u16le-zlib-base64 ») → temps par case, -1 = sans temps.
+    Décompression par le navigateur lui-même (DecompressionStream), sans bibliothèque ni requête. */
+async function decodeMinutes(raw) {
+  const packed = Uint8Array.from(atob(raw.minutesZ), (char) => char.charCodeAt(0));
+  const stream = new Blob([packed]).stream().pipeThrough(new DecompressionStream("deflate"));
+  const bytes = new DataView(await new Response(stream).arrayBuffer());
+  const wide = raw.codage.startsWith("u16");
+  const count = bytes.byteLength / (wide ? 2 : 1);
+  const minutes = new Int32Array(count);
+  for (let i = 0; i < count; i += 1) {
+    const value = wide ? bytes.getUint16(2 * i, true) : bytes.getUint8(i);
+    minutes[i] = value === raw.vide ? -1 : value;
+  }
+  return minutes;
+}
+
 async function loadR5Files(files) {
   let grids = 0;
   const notes = [];
@@ -1320,8 +1336,20 @@ async function loadR5Files(files) {
         notes.push(`${file.name} : JSON illisible`);
         continue;
       }
-      if (!Array.isArray(raw.minutes) || !raw.colonnes || !raw.rangs || !raw.pas || !raw.origine) {
+      if (!(Array.isArray(raw.minutes) || typeof raw.minutesZ === "string") || !raw.colonnes || !raw.rangs || !raw.pas || !raw.origine) {
         notes.push(`${file.name} : pas une grille r5py`);
+        continue;
+      }
+      if (raw.minutesZ) {
+        try {
+          raw.minutes = await decodeMinutes(raw);
+        } catch (error) {
+          notes.push(`${file.name} : grille compressée illisible (${error.message})`);
+          continue;
+        }
+      }
+      if (raw.minutes.length !== raw.colonnes * raw.rangs) {
+        notes.push(`${file.name} : grille incomplète`);
         continue;
       }
       if (Math.abs(raw.lat0 - app.data.meta.lat0) > 1e-9) {

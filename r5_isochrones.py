@@ -556,7 +556,7 @@ def main() -> None:
             # Repère de la carte du site (build_data.lonlat_to_xy) : case (r, c) centrée en
             # (origine[0] + (c + 0,5) × pas, origine[1] + (r + 0,5) × pas), rang 0 au sud.
             "lat0": build_data.LAT0, "origine": [round(min_x, 1), round(min_y, 1)], "pas": args.pas,
-            "colonnes": cols, "rangs": rows, "minutes": stored["minutes"].tolist(),
+            "colonnes": cols, "rangs": rows, **encode_minutes(stored["minutes"]),
         }, separators=(",", ":")), encoding="utf-8")
         for threshold, wkb, km2 in zip(THRESHOLDS, stored["shapes"], stored["areas"]):
             if len(wkb):
@@ -571,6 +571,24 @@ def main() -> None:
         if not old.name.startswith(grid_context):
             old.unlink()
     print(f"Résultats dans {args.sortie}")
+
+
+def encode_minutes(minutes) -> dict:
+    """Temps de la grille, sans perte, en peu de place : un octet par case (deux si la limite dépasse 254 min), la
+    valeur maximale du type signalant une case sans temps (hors Métropole ou inaccessible), puis compression zlib
+    et base64 pour tenir dans le JSON. Environ 0,05 Mo au lieu de 1,3 Mo pour une grille de 50 m.
+    Décodage : base64 → zlib (« deflate » du navigateur) → entiers non signés en petit-boutiste."""
+    import base64
+    import zlib
+
+    import numpy as np
+
+    wide = int(minutes.max(initial=0)) >= 255
+    dtype, empty = (np.dtype("<u2"), 65535) if wide else (np.dtype("u1"), 255)
+    values = np.asarray(minutes, dtype=np.int64)
+    packed = np.where(values < 0, empty, values).astype(dtype).tobytes()
+    return {"codage": f"{'u16le' if wide else 'u8'}-zlib-base64", "vide": empty,
+            "minutesZ": base64.b64encode(zlib.compress(packed, 9)).decode("ascii")}
 
 
 def safe_name(text: str) -> str:

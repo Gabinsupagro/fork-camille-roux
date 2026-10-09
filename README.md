@@ -88,7 +88,8 @@ Résultats dans `sortie/` (non versionné) :
 - `matrice.csv` : temps de chaque référence vers chaque point, en minutes (vide si inaccessible en 90 min) ;
 - `comptes.csv` : nombre de points sous chaque seuil, par référence ;
 - `isochrones.geojson` : isochrones par référence et par seuil (QGIS) ;
-- `grilles/<id>.json` : temps par case de 50 m, dans le repère de la carte du site, pour l'afficher.
+- `grilles/<id>.json` : temps par case de 50 m, dans le repère de la carte du site, pour l'afficher ; compressés sans
+  perte (un octet par case, zlib, base64 : environ 50 Ko au lieu de 1,3 Mo), la carte lit aussi l'ancien format.
 
 Pour les voir sur la carte, lancez le site en local (`python -m http.server 8000 --directory site`), puis
 « Résultats r5py › Dossier sortie… » et choisissez le dossier `sortie` : la page y lit les grilles,
