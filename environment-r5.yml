@@ -7,6 +7,7 @@ dependencies:
   - r5py>=1.1
   - openjdk>=21   # moteur R5 (Java)
   - pyosmium     # découpe de l'extrait OSM à la Métropole
+  - py7zr        # contours IRIS de l'IGN (.7z), pour tools/modele_voiture.py
   - geopandas
   - shapely>=2
   - numpy

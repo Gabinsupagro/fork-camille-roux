@@ -8,3 +8,8 @@ prive/
 sortie/
 data/*.osm.pbf
 data/adresses-*.csv.gz
+
+# Sources publiques volumineuses du modèle voiture (EMD 2014, INSEE, IGN) : retéléchargeables, non versionnées.
+# Le résultat, site/data/voiture.json, est versionné.
+data/edgt/
+data/insee/

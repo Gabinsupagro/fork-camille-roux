@@ -114,3 +114,27 @@ l'emprise de la Métropole et construit le réseau (quelques minutes), puis gard
 copié sans ses fichiers de tarifs, que R5 refuse (pass de plusieurs jours) ; les temps n'en dépendent pas. Les
 courses sur réservation (transport à la demande : lignes 27, 28, 31, 35 et 42) sont retirées, comme sur la carte :
 seules les lignes régulières comptent.
+
+## Probabilité de faire ses courses en voiture (`tools/modele_voiture.py`)
+
+Pour pondérer les comptes de points selon l'usage probable de la voiture, `tools/modele_voiture.py` combine :
+
+- le comportement, tiré de l'[Enquête Ménages Déplacements 2014](https://data.montpellier3m.fr/dataset/enquete-menages-deplacements-archive)
+  (EDGT34, ODbL) : sur les déplacements domicile → commerce des habitants de la Métropole, une régression
+  logistique pondérée donne la probabilité de prendre la voiture selon la distance à vol d'oiseau, le nombre de
+  voitures du ménage (une, ou deux et plus) et le type de commerce (petit ou moyen commerce, marché, grande surface) ;
+  un ménage sans voiture a une probabilité nulle (ses rares trajets comme passager sont négligés) ;
+- la motorisation actuelle par IRIS : [recensement 2022](https://www.insee.fr/fr/statistiques/8647012) (INSEE,
+  base infracommunale Logement, géographie 2024) et contours IRIS 2024 de l'IGN.
+
+Sources à placer (non versionnées) dans `data/edgt/` (`MMM_MMM_EDGT_DataBrutes.zip`, `MMM_MMM_EDGT_DecoupagesGeo.zip`)
+et `data/insee/` (`base-ic-logement-2022_csv.zip`, `CONTOURS-IRIS_3-0__GPKG_LAMB93_FXX_2024-01-01.7z`), puis :
+
+```bash
+python tools/modele_voiture.py --edgt data/edgt/MMM_MMM_EDGT_DataBrutes.zip --decoupage data/edgt/MMM_MMM_EDGT_DecoupagesGeo.zip --insee data/insee/base-ic-logement-2022_csv.zip --iris data/insee/CONTOURS-IRIS_3-0__GPKG_LAMB93_FXX_2024-01-01.7z
+```
+
+Le résultat, `site/data/voiture.json` (versionné, 0,15 Mo), contient les coefficients, la qualité de l'ajustement et,
+pour les 160 IRIS de la Métropole, les parts de ménages sans voiture, avec une voiture, avec deux ou plus, et leurs
+contours dans le repère de la carte. Limite : le comportement date de 2014, avant la gratuité des transports pour les
+habitants (fin 2023) ; les probabilités sont plutôt hautes.
