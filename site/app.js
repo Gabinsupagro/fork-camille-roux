@@ -19,7 +19,7 @@ const STOP_HOVER_RADIUS = 9; // pixels : distance de survol d'un arrêt
 const CLICK_SLOP = { mouse: 5, touch: 12 };
 const MIN_ZOOM_FACTOR = 0.5;
 const MAX_ZOOM_FACTOR = 14;
-const STOP_LABEL_SCALE = 0.13; // pixels par mètre au-delà desquels on nomme les points r5py
+const STOP_LABEL_SCALE = 0.13; // pixels par mètre au-delà desquels on grossit les arrêts de tram et nomme les points r5py
 const TRAM_NAME_RADIUS = 400; // mètres : en deçà, un lieu est nommé d'après la station de tram proche
 
 // Du plus proche (vert) au plus lointain (rouge) ; au-delà du max : gris.
@@ -734,8 +734,40 @@ function stopLines(station) {
   return parts.join(" · ");
 }
 
-/** Les arrêts ne sont dessinés qu'au survol : un seul à la fois, avec son nom et ses lignes. */
+/** Points des arrêts (petits pour le bus, moyens pour le tram) ; nom et lignes seulement au survol. */
 function drawStops() {
+  const { stations } = app.data;
+  const visible = ([x, y]) => x > -10 && y > -10 && x < app.size.width + 10 && y < app.size.height + 10;
+  if (app.includeBus) {
+    ctx.fillStyle = "rgba(50, 50, 50, 0.6)";
+    ctx.beginPath();
+    for (const station of stations) {
+      if (station.tram) continue;
+      const [x, y] = project(station.point);
+      if (!visible([x, y])) continue;
+      ctx.moveTo(x + 1.6, y);
+      ctx.arc(x, y, 1.6, 0, Math.PI * 2);
+    }
+    ctx.fill();
+  }
+  const radius = app.view.scale > STOP_LABEL_SCALE ? 3.4 : 2.6;
+  ctx.beginPath();
+  for (const station of stations) {
+    if (!station.tram) continue;
+    const [x, y] = project(station.point);
+    if (!visible([x, y])) continue;
+    ctx.moveTo(x + radius, y);
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+  }
+  ctx.fillStyle = "#fff";
+  ctx.fill();
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = "#333";
+  ctx.stroke();
+  drawHoveredStop();
+}
+
+function drawHoveredStop() {
   const index = app.hoverStop;
   if (index === null || index === undefined) return;
   const station = app.data.stations[index];
