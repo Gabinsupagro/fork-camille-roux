@@ -36,7 +36,8 @@ Puis ouvrir [http://localhost:8000](http://localhost:8000).
   reprojetées dans le repère local du site (voir `site/basemap.js`). Paramètres d'URL : `fond=0` (sans fond),
   `fond=carto` (CARTO Voyager, nécessite une clé d'API), `opacite=20..100`
 - Recherche d'adresse côté navigateur : [api-adresse.data.gouv.fr](https://adresse.data.gouv.fr/)
-- Mesure d'audience : Cloudflare Web Analytics (sans cookie)
+- Aucun service tiers : ni mesure d'audience, ni police chargée ailleurs (Inter est hébergée dans `site/fonts/`,
+  SIL Open Font License). Seules les tuiles du fond de carte viennent de `tile.openstreetmap.org`.
 
 ## Modèle
 
