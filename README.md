@@ -36,7 +36,7 @@ Puis ouvrir [http://localhost:8000](http://localhost:8000).
   Métropole : ce qui reste découvert est la mer, en bleu. Fichier `data/context.geojson`, que
   `python3 fetch_data.py --context-only` télécharge seul (sans lui, la carte se construit sans mer)
 - Fond de carte : © contributeurs OpenStreetMap, tuiles du serveur officiel (`tile.openstreetmap.org`, sans clé),
-  reprojetées dans le repère local du site (voir `site/basemap.js`). Paramètres d'URL : `fond=0` (sans fond),
+  reprojetées dans le repère local du site (voir `site/basemap.js`). Paramètres d'URL : `fond=0` (sans fond), `lignes=0` (sans lignes ni arrêts, case « Lignes et arrêts »),
   `fond=carto` (CARTO Voyager, nécessite une clé d'API), `opacite=20..100`
 - Recherche d'adresse côté navigateur : [api-adresse.data.gouv.fr](https://adresse.data.gouv.fr/)
 - Aucun service tiers : ni mesure d'audience, ni police chargée ailleurs (Inter est hébergée dans `site/fonts/`,

@@ -77,6 +77,7 @@ const app = {
   basemap: null, // couche de tuiles, créée une fois les données chargées
   provider: DEFAULT_PROVIDER,
   showBasemap: true,
+  showNetwork: true, // lignes, arrêts et noms d'arrêts (affichage seulement : le calcul n'en dépend pas)
   heatOpacity: null, // null = valeur automatique selon la présence du fond de carte
   // Résultats r5py chargés depuis des fichiers locaux : grilles par référence, points, matrice.
   // grids : clé « référence|mode » (mode tc = marche + transports en commun, voiture, velo) ; refs : une entrée par référence.
@@ -706,6 +707,7 @@ function drawIsochrones() {
 
 /** Arrêt visible le plus proche d'un point de l'écran (tram, et bus s'ils sont affichés), ou null. */
 function stopAt(screen) {
+  if (!app.showNetwork) return null;
   let best = null;
   let bestDistance = STOP_HOVER_RADIUS;
   app.data.stations.forEach((station, index) => {
@@ -736,6 +738,7 @@ function stopLines(station) {
 
 /** Points des arrêts (petits pour le bus, moyens pour le tram) ; nom et lignes seulement au survol. */
 function drawStops() {
+  if (!app.showNetwork) return;
   const { stations } = app.data;
   const visible = ([x, y]) => x > -10 && y > -10 && x < app.size.width + 10 && y < app.size.height + 10;
   if (app.includeBus) {
@@ -896,7 +899,7 @@ function render() {
 
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  if (app.includeBus) {
+  if (app.showNetwork && app.includeBus) {
     // Bus : trait fin et un peu transparent, pour rester lisible sous le tram et sur la heatmap.
     ctx.globalAlpha = 0.8;
     ctx.lineWidth = 1.6 * px;
@@ -906,10 +909,12 @@ function render() {
     }
     ctx.globalAlpha = 1;
   }
-  for (const route of app.paths.routes) {
-    ctx.strokeStyle = route.color;
-    ctx.lineWidth = 3 * px;
-    ctx.stroke(route.path);
+  if (app.showNetwork) {
+    for (const route of app.paths.routes) {
+      ctx.strokeStyle = route.color;
+      ctx.lineWidth = 3 * px;
+      ctx.stroke(route.path);
+    }
   }
 
   drawIsochrones();
@@ -1136,6 +1141,7 @@ function syncUrl() {
   if (app.maxMinutes !== DEFAULT_MAX) params.set("max", String(app.maxMinutes));
   const iso = [...app.isochrones].sort((a, b) => a - b).join(",");
   if (iso !== DEFAULT_ISOCHRONES.join(",")) params.set("iso", iso || "0");
+  if (!app.showNetwork) params.set("lignes", "0");
   if (!app.showBasemap) params.set("fond", "0");
   else if (app.provider !== DEFAULT_PROVIDER) params.set("fond", app.provider);
   if (app.heatOpacity !== null) params.set("opacite", String(Math.round(app.heatOpacity * 100)));
@@ -1164,6 +1170,8 @@ function restoreFromUrl() {
   const opacity = Number(params.get("opacite"));
   if (params.has("opacite") && opacity >= 20 && opacity <= 100) app.heatOpacity = opacity / 100;
   $("basemapToggle").checked = app.showBasemap;
+  app.showNetwork = params.get("lignes") !== "0";
+  $("networkToggle").checked = app.showNetwork;
   syncOpacityControl();
   updateLegend();
 
@@ -1685,6 +1693,13 @@ function syncOpacityControl() {
 $("basemapToggle").addEventListener("change", (event) => {
   app.showBasemap = event.target.checked;
   syncOpacityControl();
+  requestRender();
+  syncUrl();
+});
+
+$("networkToggle").addEventListener("change", (event) => {
+  app.showNetwork = event.target.checked;
+  app.hoverStop = null;
   requestRender();
   syncUrl();
 });
