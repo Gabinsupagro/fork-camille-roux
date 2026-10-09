@@ -80,52 +80,10 @@ a {
   clip: rect(0 0 0 0);
 }
 
-/* --- Top bar ------------------------------------------------------------ */
-
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  padding: 10px 16px;
-}
-
-.topbar-inner {
-  max-width: 1120px;
-  margin: 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 18px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.86);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-}
-
-.brand {
-  color: var(--ink);
-  font-weight: 600;
-  text-decoration: none;
-  letter-spacing: -0.02em;
-}
-
-.topbar-link {
-  color: var(--ink-soft);
-  font-weight: 500;
-  font-size: 0.95rem;
-  text-decoration: none;
-}
-
-.topbar-link:hover {
-  color: var(--ink);
-}
-
 /* --- Hero --------------------------------------------------------------- */
 
 .page {
-  max-width: 1120px;
+  max-width: 1600px;
   margin: 0 auto;
   padding: 0 16px 56px;
 }
@@ -292,8 +250,9 @@ h1 {
 
 .map-stage {
   position: relative;
-  height: min(72vh, 720px);
-  min-height: 420px;
+  /* Presque tout l'écran : seule la barre des réglages reste visible sous la carte. */
+  height: calc(100vh - 150px);
+  min-height: 520px;
   background: #f1efe9;
 }
 
@@ -703,21 +662,6 @@ output {
 }
 
 @media (max-width: 720px) {
-  /* Sur mobile, la barre défile avec la page pour ne pas masquer le haut de la carte. */
-  .topbar {
-    position: static;
-  }
-
-  .topbar-inner {
-    padding: 10px 14px;
-  }
-
-  .brand,
-  .topbar-link {
-    font-size: 0.85rem;
-    white-space: nowrap;
-  }
-
   .hero {
     padding-top: 24px;
   }
@@ -736,7 +680,7 @@ output {
   }
 
   #mapCanvas {
-    height: 60vh;
+    height: 75vh;
   }
 
   /* Sur mobile, l'itinéraire passe sous la carte au lieu de la recouvrir. */
