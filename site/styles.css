@@ -450,7 +450,7 @@ h1 {
 }
 
 #r5Reference,
-#r5Mode {
+#modeSelect {
   max-width: 240px;
   padding: 6px 10px;
   border: 1px solid var(--line);
@@ -459,6 +459,10 @@ h1 {
   color: var(--ink);
   font: inherit;
   font-size: 0.9rem;
+}
+
+.pill-toggle.is-disabled {
+  opacity: 0.45;
 }
 
 .r5-info {

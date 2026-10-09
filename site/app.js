@@ -1,9 +1,12 @@
-// Montpellier à portée de tram
-// Carte des temps de trajet en tram (et bus) sur le réseau TaM.
+// Montpellier porte à porte
+// Carte des temps de trajet : tram et bus (réseau TaM), vélo et voiture (réseau de rues OpenStreetMap).
 
 import { createBasemap, DEFAULT_PROVIDER, PROVIDERS } from "./basemap.js?v=2";
+import { loadRoads, ROAD_MODES } from "./roads.js?v=1";
 
 const DATA_URL = new URL("./data/commute_map_data.json?v=7", import.meta.url);
+const ROADS_URL = new URL("./data/routes.bin?v=1", import.meta.url);
+const ROAD_LIMIT_MINUTES = 100; // le calcul voiture et vélo s'arrête au-delà (curseur Échelle : 90 au plus)
 const GEOCODER_URL = "https://api-adresse.data.gouv.fr/search/";
 
 const DEFAULT_FROM = { lat: 43.60853, lon: 3.8799, label: "Place de la Comédie" };
@@ -70,6 +73,12 @@ const app = {
   maxMinutes: DEFAULT_MAX,
   isochrones: [...DEFAULT_ISOCHRONES],
   heatFrom: "from", // la heatmap part du départ ou de l'arrivée
+  // Mode de déplacement : tc (marche + transports en commun), velo ou voiture. Il vaut pour la carte du site
+  // (calcul simplifié) comme pour les résultats r5py.
+  mode: "tc",
+  roads: null, // réseau de rues (voiture, vélo), chargé au premier choix de l'un de ces modes
+  roadsLoading: null,
+  roadSolution: null, // temps en voiture ou à vélo depuis le départ (panneau)
   solution: null, // plus courts chemins depuis le départ (panneau, itinéraire)
   heatSolution: null, // plus courts chemins depuis le point d'où part la heatmap
   grid: null,
@@ -81,7 +90,7 @@ const app = {
   heatOpacity: null, // null = valeur automatique selon la présence du fond de carte
   // Résultats r5py chargés depuis des fichiers locaux : grilles par référence, points, matrice.
   // grids : clé « référence|mode » (mode tc = marche + transports en commun, voiture, velo) ; refs : une entrée par référence.
-  r5: { grids: new Map(), refs: new Map(), points: [], matrix: new Map(), active: null, mode: "tc", grid: null },
+  r5: { grids: new Map(), refs: new Map(), points: [], matrix: new Map(), active: null, grid: null },
   hoverStop: null, // arrêt survolé (indice dans data.stations)
   drag: null,
   pointers: new Map(),
@@ -402,6 +411,38 @@ function computeGrid(solution) {
   // elles sont ensuite découpées sur la terre ferme au dessin.
   const bridged = fillGaps(times, cols, rows, WATER_BRIDGE_CELLS);
   return { times, smooth: smoothGrid(bridged, cols, rows), cols, rows, contours: {} };
+}
+
+/** Grille de la carte à partir des minutes par case (voiture, vélo). */
+function roadGrid(minutes) {
+  const { cells, meta } = app.data;
+  const { gridCols: cols, gridRows: rows } = meta;
+  const times = new Float32Array(cols * rows).fill(NaN);
+  cells.forEach((cell, index) => {
+    times[cell.row * cols + cell.col] = minutes[index];
+  });
+  const bridged = fillGaps(times, cols, rows, WATER_BRIDGE_CELLS);
+  return { times, smooth: smoothGrid(bridged, cols, rows), cols, rows, contours: {} };
+}
+
+function ensureRoads() {
+  if (app.roads) return Promise.resolve(app.roads);
+  if (!app.roadsLoading) {
+    toast("Chargement du réseau de rues…", 6000);
+    app.roadsLoading = loadRoads(ROADS_URL, app.data.cells)
+      .then((roads) => {
+        app.roads = roads;
+        $("toast").hidden = true;
+        return roads;
+      })
+      .catch((error) => {
+        console.error(error);
+        app.roadsLoading = null;
+        toast(`Réseau de rues indisponible : ${error.message}`, 7000);
+        throw error;
+      });
+  }
+  return app.roadsLoading;
 }
 
 /** Moyenne 3×3 limitée à la terre ferme, pour des isochrones moins crénelées. */
@@ -925,6 +966,10 @@ function render() {
   drawStops();
   if (app.to) {
     let minutes = app.solution ? formatMinutes(travelTo(app.solution, app.to.point).minutes) : null;
+    if (app.roadSolution) {
+      const road = roadMinutesTo(app.to.point);
+      minutes = road === null ? "—" : formatMinutes(road);
+    }
     if (app.r5.active) {
       const r5 = r5TimeAt(app.to.point);
       minutes = r5 === null ? "> max" : formatMinutes(r5);
@@ -1001,6 +1046,24 @@ function recompute({ fast = false } = {}) {
     return;
   }
   if (!app.from) return;
+  if (app.mode !== "tc") {
+    if (!app.roads) {
+      ensureRoads().then(() => recompute(), () => {});
+      return;
+    }
+    const options = { maxMinutes: ROAD_LIMIT_MINUTES };
+    app.solution = null;
+    app.heatSolution = null;
+    app.roadSolution = app.roads.solve(app.mode, app.from.point, options);
+    // Carte depuis l'arrivée : temps de chaque lieu vers l'arrivée (sens uniques pris à rebours).
+    const heat = heatSource() === app.from ? app.roadSolution : app.roads.solve(app.mode, app.to.point, { ...options, reverse: true });
+    app.grid = roadGrid(app.roads.cellMinutes(heat));
+    paintHeat(app.grid, { fast });
+    updatePanel();
+    requestRender();
+    return;
+  }
+  app.roadSolution = null;
   app.solution = solveFrom(app.from.point);
   app.heatSolution = heatSource() === app.from ? app.solution : solveFrom(app.to.point);
   app.grid = computeGrid(app.heatSolution);
@@ -1052,6 +1115,10 @@ function updatePanel() {
   $("r5Info").hidden = !app.r5.active;
   if (app.r5.active) {
     updateR5Panel();
+    return;
+  }
+  if (app.mode !== "tc") {
+    updateRoadPanel();
     return;
   }
   const result = $("tripResult");
@@ -1107,6 +1174,43 @@ function updatePanel() {
   }
 }
 
+/** Minutes en voiture ou à vélo du départ vers un point (null si inaccessible). */
+function roadMinutesTo(point) {
+  if (!app.roads || !app.roadSolution) return null;
+  return app.roads.minutesTo(app.roadSolution, point);
+}
+
+function updateRoadPanel() {
+  const settings = ROAD_MODES[app.mode];
+  const result = $("tripResult");
+  if (!app.to || !app.roadSolution) {
+    result.hidden = true;
+    $("tripHint").hidden = false;
+  } else {
+    const minutes = roadMinutesTo(app.to.point);
+    result.hidden = false;
+    $("tripHint").hidden = true;
+    $("tripTo").textContent = app.to.label;
+    $("tripDuration").textContent = minutes === null ? "Inaccessible" : formatMinutes(minutes);
+    const item = document.createElement("li");
+    const badge = document.createElement("span");
+    badge.className = "badge walk";
+    badge.textContent = app.mode === "velo" ? "🚲" : "🚗";
+    const text = document.createElement("span");
+    text.textContent = `${settings.label} : ${settings.describe}.`;
+    item.append(badge, text);
+    $("tripSteps").replaceChildren(item);
+  }
+  if (app.grid) {
+    const { cells, meta } = app.data;
+    const reachable = cells.filter((cell) => app.grid.times[cell.row * meta.gridCols + cell.col] <= REACH_MINUTES).length;
+    const percent = Math.round((reachable / cells.length) * 100);
+    const where = heatSource() === app.from ? "de ce départ" : "de cette arrivée";
+    const how = app.mode === "velo" ? "à vélo" : "en voiture";
+    $("reach").textContent = `${percent} % de la surface de la Métropole est à moins de ${REACH_MINUTES} minutes ${how} ${where} (calcul simplifié, extrémités comprises).`;
+  }
+}
+
 function contrastText(hex) {
   const value = parseInt(hex.slice(1), 16);
   const luminance = 0.299 * (value >> 16) + 0.587 * ((value >> 8) & 255) + 0.114 * (value & 255);
@@ -1137,6 +1241,7 @@ function syncUrl() {
   if (app.from && !app.r5.active) params.set("from", formatPair(app.from.point));
   if (app.to && !app.r5.active) params.set("to", formatPair(app.to.point));
   if (app.to && app.heatFrom === "to") params.set("carte", "arrivee");
+  if (app.mode !== "tc") params.set("mode", app.mode);
   if (!app.includeBus) params.set("bus", "0");
   if (app.maxMinutes !== DEFAULT_MAX) params.set("max", String(app.maxMinutes));
   const iso = [...app.isochrones].sort((a, b) => a - b).join(",");
@@ -1153,6 +1258,8 @@ function restoreFromUrl() {
   const params = new URLSearchParams(location.search);
   app.includeBus = params.get("bus") !== "0"; // par défaut avec les bus ; les anciens liens « bus=1 » restent valables
   $("busToggle").checked = app.includeBus;
+  const mode = params.get("mode");
+  setModeControls(mode in ROAD_MODES ? mode : "tc");
   const max = Number(params.get("max"));
   if (max >= MIN_MAX && max <= 90) app.maxMinutes = max;
   $("maxRange").value = String(app.maxMinutes);
@@ -1363,7 +1470,7 @@ const R5_MODES = { tc: "Marche + transports en commun", voiture: "Voiture", velo
 
 /** Grille de la référence active dans le mode choisi (absente en voiture pour une référence sans parking). */
 function r5CurrentGrid() {
-  return app.r5.grids.get(`${app.r5.active}|${app.r5.mode}`) ?? null;
+  return app.r5.grids.get(`${app.r5.active}|${app.mode}`) ?? null;
 }
 
 /** Temps r5py (minutes) de la référence active vers un point, d'après sa grille ; null hors grille ou inaccessible. */
@@ -1380,7 +1487,7 @@ function r5TimeAt(point) {
 /** Temps vers un point de la base : la matrice si elle est chargée (temps exact au point), sinon la grille. */
 function r5PointTime(point) {
   if (!r5CurrentGrid()) return null;
-  const key = `${app.r5.active}|${app.r5.mode}|${point.id}`;
+  const key = `${app.r5.active}|${app.mode}|${point.id}`;
   if (app.r5.matrix.has(key)) return app.r5.matrix.get(key);
   return r5TimeAt(point.point);
 }
@@ -1483,8 +1590,6 @@ function fillR5Select() {
   select.replaceChildren(...options);
   select.value = app.r5.active ?? "";
   select.hidden = !app.r5.refs.size;
-  $("r5Mode").hidden = !app.r5.refs.size;
-  $("r5Mode").value = app.r5.mode;
 }
 
 /** Recalcule la grille affichée pour la référence et le mode choisis (aucune en voiture sans parking). */
@@ -1525,21 +1630,21 @@ function updateR5Panel() {
     if (className) p.className = className;
     parts.push(p);
   };
-  line(R5_MODES[app.r5.mode], "trip-eyebrow");
+  line(R5_MODES[app.mode], "trip-eyebrow");
   if (!raw) {
     line(
-      app.r5.mode === "voiture"
+      app.mode === "voiture"
         ? "Pas de calcul en voiture pour cette référence : elle n'a pas de parking (colonne parking de references.csv)."
-        : `Pas de calcul « ${R5_MODES[app.r5.mode]} » pour cette référence dans les fichiers chargés (relancer r5_isochrones.py).`,
+        : `Pas de calcul « ${R5_MODES[app.mode]} » pour cette référence dans les fichiers chargés (relancer r5_isochrones.py).`,
       "r5-source",
     );
     $("r5Info").replaceChildren(...parts);
     $("reach").textContent = "";
     return;
   }
-  if (app.r5.mode === "voiture") {
+  if (app.mode === "voiture") {
     line(`Temps en voiture, circulation fluide, + ${raw.voitureExtremites ?? 0} min pour rejoindre sa voiture, se garer et marcher.`, "r5-source");
-  } else if (app.r5.mode === "velo") {
+  } else if (app.mode === "velo") {
     const stress = raw.stressVelo ? `, rues de stress ≤ ${raw.stressVelo} (sinon vélo poussé à pied)` : "";
     line(`Temps à vélo, ${raw.vitesseVelo ?? 12} km/h${stress}, + ${raw.veloExtremites ?? 0} min pour sortir, garer son vélo et marcher.`, "r5-source");
   } else {
@@ -1570,7 +1675,7 @@ function updateR5Panel() {
     }
     line("Points dans l'isochrone", "trip-eyebrow");
     parts.push(list);
-    const exact = points.every((point) => app.r5.matrix.has(`${app.r5.active}|${app.r5.mode}|${point.id}`));
+    const exact = points.every((point) => app.r5.matrix.has(`${app.r5.active}|${app.mode}|${point.id}`));
     line(exact ? "D'après matrice.csv (temps exacts aux adresses)." : "D'après la grille (chargez matrice.csv pour les temps exacts).", "r5-source");
   } else {
     line("Chargez geocodage.csv pour afficher et compter les points.", "r5-source");
@@ -1630,11 +1735,19 @@ for (const id of ["r5Files", "r5Folder"]) {
   });
 }
 
-$("r5Mode").addEventListener("change", (event) => {
-  app.r5.mode = event.target.value;
-  if (!app.r5.active) return;
-  refreshR5Grid();
+function setModeControls(mode) {
+  app.mode = mode;
+  $("modeSelect").value = mode;
+  // Tram et bus ne servent qu'au mode marche + transports en commun.
+  $("busToggle").disabled = mode !== "tc";
+  $("busToggle").closest("label").classList.toggle("is-disabled", mode !== "tc");
+}
+
+$("modeSelect").addEventListener("change", (event) => {
+  setModeControls(event.target.value);
+  if (app.r5.active) refreshR5Grid();
   recompute();
+  syncUrl();
 });
 
 $("r5Reference").addEventListener("change", (event) => {

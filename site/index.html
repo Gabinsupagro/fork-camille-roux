@@ -13,7 +13,7 @@
     <link rel="icon" href="./favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
 
-    <link rel="stylesheet" href="./styles.css?v=11" />
+    <link rel="stylesheet" href="./styles.css?v=12" />
   </head>
   <body>
 
@@ -79,7 +79,12 @@
 
         <div class="controls">
           <div class="control-group">
-            <span class="control-label">Réseau</span>
+            <label class="control-label" for="modeSelect">Mode</label>
+            <select id="modeSelect" aria-label="Mode de déplacement">
+              <option value="tc">Marche + transports en commun</option>
+              <option value="velo">Vélo</option>
+              <option value="voiture">Voiture</option>
+            </select>
             <label class="pill-toggle"><input type="checkbox" checked disabled /> Tram</label>
             <label class="pill-toggle"><input id="busToggle" type="checkbox" checked /> Bus</label>
           </div>
@@ -115,11 +120,6 @@
               Dossier sortie…<input id="r5Folder" type="file" webkitdirectory />
             </label>
             <select id="r5Reference" aria-label="Adresse de référence r5py" hidden></select>
-            <select id="r5Mode" aria-label="Mode de déplacement" hidden>
-              <option value="tc">Marche + transports en commun</option>
-              <option value="voiture">Voiture</option>
-              <option value="velo">Vélo</option>
-            </select>
           </div>
           <div class="control-group actions">
             <button id="locate" type="button" class="button">Ma position</button>
@@ -133,11 +133,23 @@
       <section class="notes">
         <h2>Comment c'est calculé</h2>
         <p>
-          <strong>Carte du site</strong> (calculée dans le navigateur)&nbsp;: horaires théoriques TaM d'un jour de semaine
-          ordinaire, entre 7&nbsp;h et 20&nbsp;h. Durée médiane entre deux arrêts, attente égale à la moitié de
-          l'intervalle entre deux passages, marche à 4,5&nbsp;km/h à vol d'oiseau jusqu'aux arrêts, pénalité de
-          correspondance. Bus en option, lignes sur réservation exclues. Pas de temps réel ni de perturbations.
+          <strong>Carte du site</strong> (calcul simplifié dans le navigateur, refait à chaque déplacement du départ), sur
+          une grille de 200&nbsp;m&nbsp;:
         </p>
+        <ul>
+          <li>
+            <strong>Marche + transports en commun</strong>&nbsp;: horaires théoriques TaM d'un jour de semaine ordinaire,
+            entre 7&nbsp;h et 20&nbsp;h. Durée médiane entre deux arrêts, attente égale à la moitié de l'intervalle entre
+            deux passages, marche à 4,5&nbsp;km/h à vol d'oiseau jusqu'aux arrêts, pénalité de correspondance. Bus en
+            option, lignes sur réservation exclues. Pas de temps réel ni de perturbations.
+          </li>
+          <li>
+            <strong>Vélo et voiture</strong>&nbsp;: plus court chemin sur les rues OpenStreetMap, avec les mêmes règles
+            que r5py (vitesses, sens uniques, stress du trafic pour le vélo) et les mêmes minutes aux extrémités&nbsp;;
+            chaque case prend le temps de l'intersection la plus proche. Écart moyen d'environ 2&nbsp;min avec r5py
+            pour des trajets de moins de 30&nbsp;min.
+          </li>
+        </ul>
         <p>
           <strong>Résultats r5py</strong> (calculés sur votre ordinateur avec <code>r5_isochrones.py</code>)&nbsp;: temps
           porte à porte entre chaque adresse de référence et chaque point, en suivant les rues OpenStreetMap, et grille de
@@ -211,6 +223,6 @@
     </main>
 
     <div id="toast" class="toast" role="status" hidden></div>
-    <script type="module" src="./app.js?v=22"></script>
+    <script type="module" src="./app.js?v=24"></script>
   </body>
 </html>

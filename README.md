@@ -36,7 +36,7 @@ Puis ouvrir [http://localhost:8000](http://localhost:8000).
   Métropole : ce qui reste découvert est la mer, en bleu. Fichier `data/context.geojson`, que
   `python3 fetch_data.py --context-only` télécharge seul (sans lui, la carte se construit sans mer)
 - Fond de carte : © contributeurs OpenStreetMap, tuiles du serveur officiel (`tile.openstreetmap.org`, sans clé),
-  reprojetées dans le repère local du site (voir `site/basemap.js`). Paramètres d'URL : `fond=0` (sans fond), `lignes=0` (sans lignes ni arrêts, case « Lignes et arrêts »),
+  reprojetées dans le repère local du site (voir `site/basemap.js`). Paramètres d'URL : `mode=velo` ou `mode=voiture`, `fond=0` (sans fond), `lignes=0` (sans lignes ni arrêts, case « Lignes et arrêts »),
   `fond=carto` (CARTO Voyager, nécessite une clé d'API), `opacite=20..100`
 - Recherche d'adresse côté navigateur : [api-adresse.data.gouv.fr](https://adresse.data.gouv.fr/)
 - Aucun service tiers : ni mesure d'audience, ni police chargée ailleurs (Inter est hébergée dans `site/fonts/`,
@@ -52,6 +52,25 @@ Les temps viennent des horaires GTFS d'un mardi ou jeudi ordinaire, entre 7 h et
 - marche à pied à 75 m/min (4,5 km/h) à vol d'oiseau, sans pénalité d'accès (arrêts en surface).
 
 Pas de temps réel ni de perturbations. Les trajets à la demande (TaD) sont exclus.
+
+La liste « Mode » propose aussi le **vélo** et la **voiture**, recalculés eux aussi à chaque déplacement du départ
+(`site/roads.js`) : plus court chemin sur un réseau de rues compact, `site/data/routes.bin` (1,5 Mo, chargé au premier
+choix de l'un de ces modes), avec les règles de R5 et les réglages de `r5_isochrones.py` :
+
+- voiture : vitesse du tag `maxspeed`, sinon celle de R5 selon le type de route, sens uniques, 1,5 s par intersection
+  (les virages), + 5 min aux extrémités ;
+- vélo : 12 km/h × 1,03 sur les rues ouvertes aux vélos, vélo poussé à pied (4,5 km/h) sur les rues de stress 4 (grand
+  axe sans bande cyclable, et petite rue qui y débouche sans feux), + 3 min aux extrémités ;
+- une adresse se rattache à l'intersection la plus proche, ni sur une autoroute ni dans un tunnel, et le chemin
+  jusqu'à elle se fait à pied (voiture) ou à vélo.
+
+Sur 6 000 trajets tirés au hasard dans la Métropole, l'écart moyen avec r5py est d'environ 2 min pour des trajets de
+moins de 30 min, sans biais notable. Pour refaire `routes.bin` après une mise à jour de l'extrait OSM (celui que
+`r5_isochrones.py` découpe à la Métropole) :
+
+```bash
+python tools/reseau_routier.py sortie/languedoc-roussillon-261004_metropole.osm.pbf
+```
 
 ## Temps porte à porte et isochrones précises (r5py, en local)
 
