@@ -4,6 +4,9 @@ Carte interactive des temps de trajet dans la Métropole de Montpellier : en **t
 navigateur, et porte à porte à pied et en transports en commun, à **vélo** ou en **voiture** à partir de calculs r5py
 faits en local.
 
+Basé sur un fork du projet de Camille Roux,
+[Montpellier à portée de tram](https://github.com/camilleroux/montpellier-temps-transport).
+
 Idée originale : le [NYC Transit Time Cartogram](https://castrio.me/nyc/) d'Anthony Castrio, puis sa
 [déclinaison parisienne](https://github.com/JulesGrandin/paris-temps-transport) par Jules Grandin.
 
