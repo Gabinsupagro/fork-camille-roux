@@ -62,6 +62,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--voiture-extremites", type=float, default=5.0,
                         help="minutes ajoutées à chaque trajet en voiture : rejoindre sa voiture, se garer, marcher "
                              "jusqu'au magasin (défaut : 5) ; la voiture n'est calculée que pour les références avec parking=oui")
+    parser.add_argument("--velo-extremites", type=float, default=3.0,
+                        help="minutes ajoutées à chaque trajet à vélo : sortir et garer son vélo, marcher jusqu'au "
+                             "magasin (défaut : 3) ; le vélo est calculé pour toutes les références")
+    parser.add_argument("--vitesse-velo", type=float, default=12.0,
+                        help="km/h, constante sur tout le trajet (défaut : 12, celui de R5)")
+    parser.add_argument("--stress-velo", type=int, choices=[1, 2, 3, 4], default=3,
+                        help="niveau de stress du trafic (LTS) le plus élevé accepté à vélo ; au-delà, le cycliste "
+                             "pousse son vélo à pied ou fait un détour (défaut : 3, celui de R5)")
     parser.add_argument("--sans-grille", action="store_true", help="matrice et comptes seulement, sans grille ni isochrones")
     parser.add_argument("--tout-recalculer", action="store_true",
                         help="ignore le cache (sortie/cache/) et recalcule tout, géocodage compris")
@@ -443,21 +451,26 @@ def main() -> None:
     day = args.date or reference_date(args.gtfs)
     departure, window = parse_window(args.plage, day)
     print(f"Jour de référence {day}, départs {args.plage}, marche {args.vitesse_marche:.1f} km/h, "
-          f"voiture + {args.voiture_extremites:g} min aux extrémités")
+          f"voiture + {args.voiture_extremites:g} min aux extrémités, vélo {args.vitesse_velo:g} km/h "
+          f"(stress ≤ {args.stress_velo}) + {args.velo_extremites:g} min")
     osm, gtfs = crop_osm(args.osm, args.sortie), prepare_gtfs(args.gtfs, args.sortie)
     osm_digest = file_digest(osm)
     communes_digest = file_digest(build_data.DATA_DIR / "communes_3m.geojson")
-    # Deux modes : marche + transports en commun pour toutes les références ; voiture pour celles avec parking.
-    # Chaque mode a son contexte (ce dont ses temps dépendent) : la voiture ne dépend ni du GTFS ni de la plage.
+    # Trois modes : marche + transports en commun et vélo pour toutes les références ; voiture pour celles avec
+    # parking. Chaque mode a son contexte (ce dont ses temps dépendent) : voiture et vélo ne dépendent ni du GTFS
+    # ni de la plage.
     contexts = {
         "tc": fingerprint(CALCULATION_VERSION, r5py.__version__, osm_digest, file_digest(gtfs), day, args.plage,
                           args.vitesse_marche, args.max_minutes),
         "voiture": fingerprint(CALCULATION_VERSION, r5py.__version__, osm_digest, args.max_minutes, args.voiture_extremites, "voiture"),
+        "velo": fingerprint(CALCULATION_VERSION, r5py.__version__, osm_digest, args.max_minutes, args.velo_extremites,
+                            args.vitesse_velo, args.stress_velo, args.vitesse_marche, "velo"),
     }
     grid_contexts = {mode: fingerprint(ctx, args.pas, communes_digest) for mode, ctx in contexts.items()}
     with_parking = [ref for ref in references if ref["parking"]]
-    refs_by_mode = {"tc": references, "voiture": with_parking}
-    print(f"Références : {len(references)} en marche + transports en commun, {len(with_parking)} aussi en voiture (parking)")
+    refs_by_mode = {"tc": references, "voiture": with_parking, "velo": references}
+    print(f"Références : {len(references)} en marche + transports en commun et à vélo, "
+          f"{len(with_parking)} aussi en voiture (parking)")
 
     network = None
 
@@ -478,8 +491,15 @@ def main() -> None:
         "voiture": dict(departure=departure, departure_time_window=dt.timedelta(minutes=5), percentiles=[50],
                         max_time=dt.timedelta(minutes=max(1, args.max_minutes - args.voiture_extremites)),
                         transport_modes=[r5py.TransportMode.CAR]),
+        # Vélo : plus court chemin sur les rues ouvertes aux vélos, à vitesse constante, sans horaire. Sur une rue
+        # interdite aux vélos ou trop stressante (au-delà de --stress-velo), R5 fait pousser le vélo à pied
+        # (vitesse de marche) si les piétons y passent, sinon la rue est évitée.
+        "velo": dict(departure=departure, departure_time_window=dt.timedelta(minutes=5), percentiles=[50],
+                     max_time=dt.timedelta(minutes=max(1, args.max_minutes - args.velo_extremites)),
+                     speed_cycling=args.vitesse_velo, speed_walking=args.vitesse_marche,
+                     max_bicycle_traffic_stress=args.stress_velo, transport_modes=[r5py.TransportMode.BICYCLE]),
     }
-    extra = {"tc": 0.0, "voiture": args.voiture_extremites}
+    extra = {"tc": 0.0, "voiture": args.voiture_extremites, "velo": args.velo_extremites}
     as_frame = lambda places, ids: gpd.GeoDataFrame(
         {"id": ids}, geometry=gpd.points_from_xy([p["lon"] for p in places], [p["lat"] for p in places]), crs=4326
     )
@@ -584,6 +604,9 @@ def main() -> None:
             "reference": ref["id"], "mode": mode, "adresse": ref["label"], "lat": ref["lat"], "lon": ref["lon"],
             "jour": day, "plage": args.plage if mode == "tc" else None, "vitesseMarche": args.vitesse_marche,
             "voitureExtremites": args.voiture_extremites if mode == "voiture" else None,
+            "veloExtremites": args.velo_extremites if mode == "velo" else None,
+            "vitesseVelo": args.vitesse_velo if mode == "velo" else None,
+            "stressVelo": args.stress_velo if mode == "velo" else None,
             # Repère de la carte du site (build_data.lonlat_to_xy) : case (r, c) centrée en
             # (origine[0] + (c + 0,5) × pas, origine[1] + (r + 0,5) × pas), rang 0 au sud.
             "lat0": build_data.LAT0, "origine": [round(min_x, 1), round(min_y, 1)], "pas": args.pas,

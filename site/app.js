@@ -78,7 +78,7 @@ const app = {
   showBasemap: true,
   heatOpacity: null, // null = valeur automatique selon la présence du fond de carte
   // Résultats r5py chargés depuis des fichiers locaux : grilles par référence, points, matrice.
-  // grids : clé « référence|mode » (mode tc = marche + transports en commun, voiture) ; refs : une entrée par référence.
+  // grids : clé « référence|mode » (mode tc = marche + transports en commun, voiture, velo) ; refs : une entrée par référence.
   r5: { grids: new Map(), refs: new Map(), points: [], matrix: new Map(), active: null, mode: "tc", grid: null },
   drag: null,
   pointers: new Map(),
@@ -1290,7 +1290,7 @@ function r5Grid(raw) {
   };
 }
 
-const R5_MODES = { tc: "Marche + transports en commun", voiture: "Voiture" };
+const R5_MODES = { tc: "Marche + transports en commun", voiture: "Voiture", velo: "Vélo" };
 
 /** Grille de la référence active dans le mode choisi (absente en voiture pour une référence sans parking). */
 function r5CurrentGrid() {
@@ -1458,13 +1458,21 @@ function updateR5Panel() {
   };
   line(R5_MODES[app.r5.mode], "trip-eyebrow");
   if (!raw) {
-    line("Pas de calcul en voiture pour cette référence : elle n'a pas de parking (colonne parking de references.csv).", "r5-source");
+    line(
+      app.r5.mode === "voiture"
+        ? "Pas de calcul en voiture pour cette référence : elle n'a pas de parking (colonne parking de references.csv)."
+        : `Pas de calcul « ${R5_MODES[app.r5.mode]} » pour cette référence dans les fichiers chargés (relancer r5_isochrones.py).`,
+      "r5-source",
+    );
     $("r5Info").replaceChildren(...parts);
     $("reach").textContent = "";
     return;
   }
   if (app.r5.mode === "voiture") {
     line(`Temps en voiture, circulation fluide, + ${raw.voitureExtremites ?? 0} min pour rejoindre sa voiture, se garer et marcher.`, "r5-source");
+  } else if (app.r5.mode === "velo") {
+    const stress = raw.stressVelo ? `, rues de stress ≤ ${raw.stressVelo} (sinon vélo poussé à pied)` : "";
+    line(`Temps à vélo, ${raw.vitesseVelo ?? 12} km/h${stress}, + ${raw.veloExtremites ?? 0} min pour sortir, garer son vélo et marcher.`, "r5-source");
   } else {
     line(`Temps porte à porte r5py, le ${raw.jour.slice(6)}/${raw.jour.slice(4, 6)}, départs ${raw.plage}.`, "r5-source");
   }

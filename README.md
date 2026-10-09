@@ -108,6 +108,15 @@ voiture, se garer et marcher jusqu'au magasin (`--voiture-extremites`, 5 min par
 s'appellent `grilles/<id>__voiture.json`. Sur la carte, la liste « Marche + transports en commun / Voiture » choisit
 le mode affiché.
 
+**Vélo.** Pour toutes les références, le script calcule aussi les temps à vélo (r5py) : plus court chemin sur les
+rues ouvertes aux vélos (sens uniques respectés, sauf contresens cyclable indiqué dans OpenStreetMap), à vitesse
+constante (`--vitesse-velo`, 12 km/h par défaut, sans pente ni feux), plus un temps aux extrémités pour sortir et
+garer son vélo et marcher jusqu'au magasin (`--velo-extremites`, 3 min par défaut). R5 classe chaque rue selon le
+stress du trafic pour un cycliste (de 1, piste ou rue résidentielle, à 4, grand axe rapide sans aménagement) ; au-delà
+de `--stress-velo` (3 par défaut), le cycliste pousse son vélo à pied, à la vitesse de marche, ou fait un détour, selon
+ce qui est le plus rapide. Les grilles vélo s'appellent `grilles/<id>__velo.json` ; mode `velo` dans les CSV ;
+« Vélo » dans la liste de la carte.
+
 Le calcul est incrémental : ajoutez des lignes à `references.csv` ou `points.csv` et relancez la même commande,
 seuls les nouveaux lieux sont calculés (une nouvelle référence : ses temps vers tous les points et sa grille ; un
 nouveau point : ses temps depuis toutes les références). Les adresses déjà géocodées ne sont pas recherchées à
