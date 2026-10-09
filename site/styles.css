@@ -490,7 +490,8 @@ h1 {
   outline-offset: 2px;
 }
 
-#r5Reference {
+#r5Reference,
+#r5Mode {
   max-width: 240px;
   padding: 6px 10px;
   border: 1px solid var(--line);

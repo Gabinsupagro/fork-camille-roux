@@ -173,6 +173,10 @@
               Dossier sortie…<input id="r5Folder" type="file" webkitdirectory />
             </label>
             <select id="r5Reference" aria-label="Adresse de référence r5py" hidden></select>
+            <select id="r5Mode" aria-label="Mode de déplacement" hidden>
+              <option value="tc">Marche + transports en commun</option>
+              <option value="voiture">Voiture</option>
+            </select>
           </div>
           <div class="control-group actions">
             <button id="locate" type="button" class="button">Ma position</button>
@@ -214,6 +218,6 @@
     </main>
 
     <div id="toast" class="toast" role="status" hidden></div>
-    <script type="module" src="./app.js?v=17"></script>
+    <script type="module" src="./app.js?v=18"></script>
   </body>
 </html>

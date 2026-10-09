@@ -59,6 +59,9 @@ def parse_args() -> argparse.Namespace:
                         help="km/h (défaut : 4,5, comme le site)")
     parser.add_argument("--pas", type=float, default=50.0, help="pas de la grille en mètres (défaut : 50)")
     parser.add_argument("--max-minutes", type=int, default=90, help="au-delà, un point est jugé inaccessible (défaut : 90)")
+    parser.add_argument("--voiture-extremites", type=float, default=5.0,
+                        help="minutes ajoutées à chaque trajet en voiture : rejoindre sa voiture, se garer, marcher "
+                             "jusqu'au magasin (défaut : 5) ; la voiture n'est calculée que pour les références avec parking=oui")
     parser.add_argument("--sans-grille", action="store_true", help="matrice et comptes seulement, sans grille ni isochrones")
     parser.add_argument("--tout-recalculer", action="store_true",
                         help="ignore le cache (sortie/cache/) et recalcule tout, géocodage compris")
@@ -104,7 +107,10 @@ def read_places(path: Path, geocoder: "BanGeocoder | None", kind: str) -> tuple[
             sys.exit(f"{path.name}, ligne {index} : ni « adresse » ni « lat »/« lon ».")
         report.append({"fichier": kind, "id": place_id, "adresse": address, **found})
         if found["lat"] is not None:
-            places.append({"id": place_id, "label": address or place_id, "lat": found["lat"], "lon": found["lon"]})
+            places.append({"id": place_id, "label": address or place_id, "lat": found["lat"], "lon": found["lon"],
+                           # Colonnes facultatives des références : parking (oui/non) et type de commerce.
+                           "parking": (row.get("parking") or "").strip().lower() in ("oui", "o", "yes", "y", "1", "vrai", "true"),
+                           "type": (row.get("type") or "").strip()})
     return places, report
 
 
@@ -436,11 +442,22 @@ def main() -> None:
     # --- Contexte du calcul : ce dont dépendent tous les temps ---
     day = args.date or reference_date(args.gtfs)
     departure, window = parse_window(args.plage, day)
-    print(f"Jour de référence {day}, départs {args.plage}, marche {args.vitesse_marche:.1f} km/h")
+    print(f"Jour de référence {day}, départs {args.plage}, marche {args.vitesse_marche:.1f} km/h, "
+          f"voiture + {args.voiture_extremites:g} min aux extrémités")
     osm, gtfs = crop_osm(args.osm, args.sortie), prepare_gtfs(args.gtfs, args.sortie)
-    context = fingerprint(CALCULATION_VERSION, r5py.__version__, file_digest(osm), file_digest(gtfs), day, args.plage,
-                          args.vitesse_marche, args.max_minutes)
-    grid_context = fingerprint(context, args.pas, file_digest(build_data.DATA_DIR / "communes_3m.geojson"))
+    osm_digest = file_digest(osm)
+    communes_digest = file_digest(build_data.DATA_DIR / "communes_3m.geojson")
+    # Deux modes : marche + transports en commun pour toutes les références ; voiture pour celles avec parking.
+    # Chaque mode a son contexte (ce dont ses temps dépendent) : la voiture ne dépend ni du GTFS ni de la plage.
+    contexts = {
+        "tc": fingerprint(CALCULATION_VERSION, r5py.__version__, osm_digest, file_digest(gtfs), day, args.plage,
+                          args.vitesse_marche, args.max_minutes),
+        "voiture": fingerprint(CALCULATION_VERSION, r5py.__version__, osm_digest, args.max_minutes, args.voiture_extremites, "voiture"),
+    }
+    grid_contexts = {mode: fingerprint(ctx, args.pas, communes_digest) for mode, ctx in contexts.items()}
+    with_parking = [ref for ref in references if ref["parking"]]
+    refs_by_mode = {"tc": references, "voiture": with_parking}
+    print(f"Références : {len(references)} en marche + transports en commun, {len(with_parking)} aussi en voiture (parking)")
 
     network = None
 
@@ -452,77 +469,90 @@ def main() -> None:
             print(f"Réseau prêt en {time.time() - started:.0f} s")
         return network
 
-    options = dict(
-        departure=departure,
-        departure_time_window=window,
-        percentiles=[50],
-        max_time=dt.timedelta(minutes=args.max_minutes),
-        speed_walking=args.vitesse_marche,
-        transport_modes=[r5py.TransportMode.TRANSIT, r5py.TransportMode.WALK],
-    )
+    options = {
+        "tc": dict(departure=departure, departure_time_window=window, percentiles=[50],
+                   max_time=dt.timedelta(minutes=args.max_minutes), speed_walking=args.vitesse_marche,
+                   transport_modes=[r5py.TransportMode.TRANSIT, r5py.TransportMode.WALK]),
+        # Voiture : circulation fluide (vitesses tirées d'OpenStreetMap), sans horaire ; le temps aux extrémités
+        # (rejoindre sa voiture, se garer, marcher jusqu'au magasin) est ajouté ensuite, d'où la limite réduite d'autant.
+        "voiture": dict(departure=departure, departure_time_window=dt.timedelta(minutes=5), percentiles=[50],
+                        max_time=dt.timedelta(minutes=max(1, args.max_minutes - args.voiture_extremites)),
+                        transport_modes=[r5py.TransportMode.CAR]),
+    }
+    extra = {"tc": 0.0, "voiture": args.voiture_extremites}
     as_frame = lambda places, ids: gpd.GeoDataFrame(
         {"id": ids}, geometry=gpd.points_from_xy([p["lon"] for p in places], [p["lat"] for p in places]), crs=4326
     )
 
+    def travel_times(mode, origins, destinations):
+        result = r5py.TravelTimeMatrix(get_network(), origins=origins, destinations=destinations, **options[mode])
+        result["travel_time"] = result.travel_time + extra[mode]
+        return result
+
     # --- Matrice références × points : seules les paires inconnues sont calculées ---
     if points:
-        matrix_cache = cache_dir / "matrice.json"
-        saved = {} if args.tout_recalculer or not matrix_cache.exists() else json.loads(matrix_cache.read_text(encoding="utf-8"))
-        if saved and saved.get("contexte") != context:
-            print("Matrice : données ou réglages changés depuis le dernier calcul, tout est recalculé")
-        known = saved.get("temps", {}) if saved.get("contexte") == context else {}
-        ref_keys = {place_key(ref) for ref in references}
-        point_keys = {place_key(point) for point in points}
-        todo = {rk: sorted(pk for pk in point_keys if f"{rk}|{pk}" not in known) for rk in sorted(ref_keys)}
-        todo = {rk: pks for rk, pks in todo.items() if pks}
-        pairs = sum(len(pks) for pks in todo.values())
-        print(f"Matrice {len(references)} × {len(points)} : {len(ref_keys) * len(point_keys) - pairs} paires déjà calculées, {pairs} à calculer")
-        if todo:
-            started = time.time()
-            by_key = {place_key(p): p for p in [*references, *points]}
-            origins = sorted(todo)
-            destinations = sorted({pk for pks in todo.values() for pk in pks})
-            result = r5py.TravelTimeMatrix(get_network(), origins=as_frame([by_key[k] for k in origins], origins),
-                                           destinations=as_frame([by_key[k] for k in destinations], destinations), **options)
-            for row in result.itertuples(index=False):
-                if row.to_id in todo.get(row.from_id, ()):
-                    known[f"{row.from_id}|{row.to_id}"] = None if pd.isna(row.travel_time) else float(row.travel_time)
-            print(f"  calculées en {time.time() - started:.1f} s")
-        # Le cache garde aussi les lieux retirés des fichiers : les remettre ne coûte rien.
-        matrix_cache.write_text(json.dumps({"contexte": context, "temps": known}), encoding="utf-8")
-        matrix = pd.DataFrame(
-            [{"reference": ref["id"], "point": point["id"], "minutes": known.get(f"{place_key(ref)}|{place_key(point)}")}
-             for ref in references for point in points]
-        )
+        matrix_rows, count_rows = [], []
+        for mode, refs in refs_by_mode.items():
+            if not refs:
+                continue
+            matrix_cache = cache_dir / ("matrice.json" if mode == "tc" else f"matrice_{mode}.json")
+            saved = {} if args.tout_recalculer or not matrix_cache.exists() else json.loads(matrix_cache.read_text(encoding="utf-8"))
+            if saved and saved.get("contexte") != contexts[mode]:
+                print(f"Matrice ({mode}) : données ou réglages changés depuis le dernier calcul, tout est recalculé")
+            known = saved.get("temps", {}) if saved.get("contexte") == contexts[mode] else {}
+            ref_keys = {place_key(ref) for ref in refs}
+            point_keys = {place_key(point) for point in points}
+            todo = {rk: sorted(pk for pk in point_keys if f"{rk}|{pk}" not in known) for rk in sorted(ref_keys)}
+            todo = {rk: pks for rk, pks in todo.items() if pks}
+            pairs = sum(len(pks) for pks in todo.values())
+            print(f"Matrice {mode} {len(refs)} × {len(points)} : {len(ref_keys) * len(point_keys) - pairs} paires déjà calculées, {pairs} à calculer")
+            if todo:
+                started = time.time()
+                by_key = {place_key(p): p for p in [*references, *points]}
+                origins = sorted(todo)
+                destinations = sorted({pk for pks in todo.values() for pk in pks})
+                result = travel_times(mode, as_frame([by_key[k] for k in origins], origins),
+                                      as_frame([by_key[k] for k in destinations], destinations))
+                for row in result.itertuples(index=False):
+                    if row.to_id in todo.get(row.from_id, ()):
+                        known[f"{row.from_id}|{row.to_id}"] = None if pd.isna(row.travel_time) else float(row.travel_time)
+                print(f"  calculées en {time.time() - started:.1f} s")
+            # Le cache garde aussi les lieux retirés des fichiers : les remettre ne coûte rien.
+            matrix_cache.write_text(json.dumps({"contexte": contexts[mode], "temps": known}), encoding="utf-8")
+            for ref in refs:
+                times = [known.get(f"{place_key(ref)}|{place_key(point)}") for point in points]
+                matrix_rows += [{"reference": ref["id"], "mode": mode, "point": point["id"], "minutes": minutes}
+                                for point, minutes in zip(points, times)]
+                values = pd.Series(times, dtype=float)
+                count_rows.append({"reference": ref["id"], "mode": mode, "adresse": ref["label"],
+                                   **{f"<= {t} min": int((values <= t).sum()) for t in THRESHOLDS},
+                                   "inaccessibles": int(values.isna().sum())})
+        matrix = pd.DataFrame(matrix_rows)
         matrix["minutes"] = matrix["minutes"].astype(float)
         matrix.to_csv(args.sortie / "matrice.csv", index=False, sep=";", encoding="utf-8-sig")
-        counts = pd.DataFrame(
-            [{"reference": ref["id"], "adresse": ref["label"],
-              **{f"<= {t} min": int((matrix[matrix.reference == ref["id"]].minutes <= t).sum()) for t in THRESHOLDS},
-              "inaccessibles": int(matrix[matrix.reference == ref["id"]].minutes.isna().sum())}
-             for ref in references]
-        )
+        counts = pd.DataFrame(count_rows)
         counts.to_csv(args.sortie / "comptes.csv", index=False, sep=";", encoding="utf-8-sig")
-        print(counts.to_string(index=False))
+        print(counts.drop(columns="adresse").to_string(index=False))
 
     if args.sans_grille:
         print(f"Résultats dans {args.sortie}")
         return
 
-    # --- Grilles et isochrones : une par référence, gardées en cache par position ---
+    # --- Grilles et isochrones : une par référence et par mode, gardées en cache par position ---
     grid_cache = cache_dir / "grilles"
     grid_cache.mkdir(exist_ok=True)
-    cached_file = lambda ref: grid_cache / f"{grid_context}_{fingerprint(place_key(ref))}.npz"
-    pending = [ref for ref in references if args.tout_recalculer or not cached_file(ref).exists()]
-    print(f"Grilles : {len(references) - len(pending)} déjà calculées, {len(pending)} à calculer")
+    cached_file = lambda ref, mode: grid_cache / f"{grid_contexts[mode]}_{fingerprint(place_key(ref))}.npz"
+    jobs = [(ref, mode) for mode, refs in refs_by_mode.items() for ref in refs]
+    pending = [(ref, mode) for ref, mode in jobs if args.tout_recalculer or not cached_file(ref, mode).exists()]
+    print(f"Grilles : {len(jobs) - len(pending)} déjà calculées, {len(pending)} à calculer")
     (min_x, min_y), cols, rows, row_index, col_index, lat, lon, land = metropole_grid(args.pas)
     if pending:
         cells = gpd.GeoDataFrame({"id": np.arange(len(lat))}, geometry=gpd.points_from_xy(lon, lat), crs=4326)
         print(f"Grille de {args.pas:.0f} m : {len(cells)} cases dans la Métropole")
     half = args.pas / 2
-    for ref in pending:
+    for ref, mode in pending:
         started = time.time()
-        times = r5py.TravelTimeMatrix(get_network(), origins=as_frame([ref], [ref["id"]]), destinations=cells, **options)
+        times = travel_times(mode, as_frame([ref], [ref["id"]]), cells)
         minutes = times.set_index("to_id").travel_time.reindex(cells.id).to_numpy()
         flat = np.full(cols * rows, -1, dtype=np.int16)  # -1 : hors Métropole ou inaccessible
         reached = ~np.isnan(minutes)
@@ -538,21 +568,22 @@ def main() -> None:
             cy = min_y + (row_index[keep] + 0.5) * args.pas
             area = shapely.intersection(shapely.union_all(shapely.box(cx - half, cy - half, cx + half, cy + half)), land)
             shapes.append(shapely.to_wkb(xy_to_lonlat(area))), areas.append(round(area.area / 1e6, 2))
-        np.savez_compressed(cached_file(ref), minutes=flat, shapes=np.array(shapes, dtype=object), areas=np.array(areas),
+        np.savez_compressed(cached_file(ref, mode), minutes=flat, shapes=np.array(shapes, dtype=object), areas=np.array(areas),
                             frame=np.array([min_x, min_y, cols, rows]))
-        print(f"  {ref['id']} : calculée en {time.time() - started:.1f} s, {int(reached.sum())} cases atteintes")
+        print(f"  {ref['id']} ({mode}) : calculée en {time.time() - started:.1f} s, {int(reached.sum())} cases atteintes")
 
     # Sorties réécrites à partir du cache, avec les ids et adresses actuels ; celles des références retirées partent.
     grid_dir = args.sortie / "grilles"
     grid_dir.mkdir(exist_ok=True)
     written, isochrones = set(), []
-    for ref in references:
-        stored = np.load(cached_file(ref), allow_pickle=True)
-        name = f"{safe_name(ref['id'])}.json"
+    for ref, mode in jobs:
+        stored = np.load(cached_file(ref, mode), allow_pickle=True)
+        name = f"{safe_name(ref['id'])}.json" if mode == "tc" else f"{safe_name(ref['id'])}__{mode}.json"
         written.add(name)
         (grid_dir / name).write_text(json.dumps({
-            "reference": ref["id"], "adresse": ref["label"], "lat": ref["lat"], "lon": ref["lon"],
-            "jour": day, "plage": args.plage, "vitesseMarche": args.vitesse_marche,
+            "reference": ref["id"], "mode": mode, "adresse": ref["label"], "lat": ref["lat"], "lon": ref["lon"],
+            "jour": day, "plage": args.plage if mode == "tc" else None, "vitesseMarche": args.vitesse_marche,
+            "voitureExtremites": args.voiture_extremites if mode == "voiture" else None,
             # Repère de la carte du site (build_data.lonlat_to_xy) : case (r, c) centrée en
             # (origine[0] + (c + 0,5) × pas, origine[1] + (r + 0,5) × pas), rang 0 au sud.
             "lat0": build_data.LAT0, "origine": [round(min_x, 1), round(min_y, 1)], "pas": args.pas,
@@ -560,7 +591,8 @@ def main() -> None:
         }, separators=(",", ":")), encoding="utf-8")
         for threshold, wkb, km2 in zip(THRESHOLDS, stored["shapes"], stored["areas"]):
             if len(wkb):
-                isochrones.append({"reference": ref["id"], "minutes": threshold, "km2": float(km2), "geometry": shapely.from_wkb(wkb)})
+                isochrones.append({"reference": ref["id"], "mode": mode, "minutes": threshold, "km2": float(km2),
+                                   "geometry": shapely.from_wkb(wkb)})
     for stale in grid_dir.glob("*.json"):
         if stale.name not in written:
             stale.unlink()
@@ -568,7 +600,7 @@ def main() -> None:
         gpd.GeoDataFrame(isochrones, crs=4326).to_file(args.sortie / "isochrones.geojson", driver="GeoJSON")
     # Grilles d'un ancien contexte (GTFS, rues ou réglages changés) : plus jamais utiles.
     for old in grid_cache.glob("*.npz"):
-        if not old.name.startswith(grid_context):
+        if not old.name.startswith(tuple(grid_contexts.values())):
             old.unlink()
     print(f"Résultats dans {args.sortie}")
 

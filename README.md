@@ -100,6 +100,14 @@ choisit l'adresse de référence : la carte affiche alors sa heatmap et ses isoc
 selon leur temps, et le nombre de points sous chaque isochrone cochée. Un clic sur la carte donne le temps porte
 à porte depuis la référence ; déplacer le départ, ou choisir « Carte du site », revient au calcul habituel.
 
+**Voiture.** Dans `references.csv`, une colonne `parking` (`oui`/`non`) et une colonne `type` (`petit ou moyen
+commerce`, `marché` ou `grande surface`). Pour chaque référence avec parking, le script calcule aussi les temps en
+voiture (r5py, circulation fluide, vitesses tirées d'OpenStreetMap), plus un temps aux extrémités pour rejoindre sa
+voiture, se garer et marcher jusqu'au magasin (`--voiture-extremites`, 5 min par défaut). `matrice.csv`,
+`comptes.csv` et `isochrones.geojson` gagnent une colonne `mode` (`tc` ou `voiture`) ; les grilles voiture
+s'appellent `grilles/<id>__voiture.json`. Sur la carte, la liste « Marche + transports en commun / Voiture » choisit
+le mode affiché.
+
 Le calcul est incrémental : ajoutez des lignes à `references.csv` ou `points.csv` et relancez la même commande,
 seuls les nouveaux lieux sont calculés (une nouvelle référence : ses temps vers tous les points et sa grille ; un
 nouveau point : ses temps depuis toutes les références). Les adresses déjà géocodées ne sont pas recherchées à

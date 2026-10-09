@@ -78,7 +78,8 @@ const app = {
   showBasemap: true,
   heatOpacity: null, // null = valeur automatique selon la présence du fond de carte
   // Résultats r5py chargés depuis des fichiers locaux : grilles par référence, points, matrice.
-  r5: { grids: new Map(), points: [], matrix: new Map(), active: null, grid: null },
+  // grids : clé « référence|mode » (mode tc = marche + transports en commun, voiture) ; refs : une entrée par référence.
+  r5: { grids: new Map(), refs: new Map(), points: [], matrix: new Map(), active: null, mode: "tc", grid: null },
   drag: null,
   pointers: new Map(),
   frameRequested: false,
@@ -938,7 +939,7 @@ function recompute({ fast = false } = {}) {
   if (app.r5.active) {
     // La carte vient de la grille r5py de la référence : rien à recalculer.
     app.grid = app.r5.grid;
-    paintHeat(app.grid, { fast });
+    if (app.grid) paintHeat(app.grid, { fast });
     updatePanel();
     requestRender();
     return;
@@ -1289,9 +1290,16 @@ function r5Grid(raw) {
   };
 }
 
+const R5_MODES = { tc: "Marche + transports en commun", voiture: "Voiture" };
+
+/** Grille de la référence active dans le mode choisi (absente en voiture pour une référence sans parking). */
+function r5CurrentGrid() {
+  return app.r5.grids.get(`${app.r5.active}|${app.r5.mode}`) ?? null;
+}
+
 /** Temps r5py (minutes) de la référence active vers un point, d'après sa grille ; null hors grille ou inaccessible. */
 function r5TimeAt(point) {
-  const raw = app.r5.grids.get(app.r5.active);
+  const raw = r5CurrentGrid();
   if (!raw) return null;
   const col = Math.floor((point[0] - raw.origine[0]) / raw.pas);
   const row = Math.floor((point[1] - raw.origine[1]) / raw.pas);
@@ -1302,7 +1310,8 @@ function r5TimeAt(point) {
 
 /** Temps vers un point de la base : la matrice si elle est chargée (temps exact au point), sinon la grille. */
 function r5PointTime(point) {
-  const key = `${app.r5.active}|${point.id}`;
+  if (!r5CurrentGrid()) return null;
+  const key = `${app.r5.active}|${app.r5.mode}|${point.id}`;
   if (app.r5.matrix.has(key)) return app.r5.matrix.get(key);
   return r5TimeAt(point.point);
 }
@@ -1356,7 +1365,13 @@ async function loadR5Files(files) {
         notes.push(`${file.name} : repère différent de la carte`);
         continue;
       }
-      app.r5.grids.set(String(raw.reference), raw);
+      // Grilles d'avant le mode voiture : sans champ « mode », ce sont des grilles marche + transports en commun.
+      raw.mode = raw.mode ?? "tc";
+      const reference = String(raw.reference);
+      app.r5.grids.set(`${reference}|${raw.mode}`, raw);
+      const known = app.r5.refs.get(reference) ?? { adresse: raw.adresse, lat: raw.lat, lon: raw.lon, modes: new Set() };
+      known.modes.add(raw.mode);
+      app.r5.refs.set(reference, known);
       grids += 1;
       continue;
     }
@@ -1370,7 +1385,8 @@ async function loadR5Files(files) {
       notes.push(`${app.r5.points.length} points`);
     } else if (columns.has("reference") && columns.has("point") && columns.has("minutes")) {
       app.r5.matrix = new Map(
-        rows.map((row) => [`${row.reference}|${row.point}`, row.minutes === "" ? null : Number(row.minutes)]),
+        // Colonne « mode » absente (matrice d'avant le mode voiture) : marche + transports en commun.
+        rows.map((row) => [`${row.reference}|${row.mode || "tc"}|${row.point}`, row.minutes === "" ? null : Number(row.minutes)]),
       );
       notes.push("matrice");
     } else {
@@ -1380,7 +1396,7 @@ async function loadR5Files(files) {
   if (grids) notes.unshift(`${grids} grille${grids > 1 ? "s" : ""}`);
   else if (!app.r5.grids.size) notes.push("aucune grille : ajoutez les fichiers .json de sortie/grilles (ou choisissez le dossier sortie)");
   fillR5Select();
-  if (!app.r5.active && app.r5.grids.size) activateR5(app.r5.grids.keys().next().value);
+  if (!app.r5.active && app.r5.refs.size) activateR5(app.r5.refs.keys().next().value);
   else if (app.r5.active) {
     updatePanel();
     requestRender();
@@ -1391,18 +1407,29 @@ async function loadR5Files(files) {
 function fillR5Select() {
   const select = $("r5Reference");
   const options = [new Option("Carte du site (sans r5py)", "")];
-  for (const [id, raw] of app.r5.grids) options.push(new Option(raw.adresse && raw.adresse !== id ? `${id} · ${raw.adresse}` : id, id));
+  for (const [id, ref] of app.r5.refs) {
+    const name = ref.adresse && ref.adresse !== id ? `${id} · ${ref.adresse}` : id;
+    options.push(new Option(ref.modes.has("voiture") ? `${name} · parking` : name, id));
+  }
   select.replaceChildren(...options);
   select.value = app.r5.active ?? "";
-  select.hidden = !app.r5.grids.size;
+  select.hidden = !app.r5.refs.size;
+  $("r5Mode").hidden = !app.r5.refs.size;
+  $("r5Mode").value = app.r5.mode;
+}
+
+/** Recalcule la grille affichée pour la référence et le mode choisis (aucune en voiture sans parking). */
+function refreshR5Grid() {
+  const raw = r5CurrentGrid();
+  app.r5.grid = raw ? r5Grid(raw) : null;
 }
 
 function activateR5(id) {
-  const raw = app.r5.grids.get(id);
-  if (!raw) return;
+  const ref = app.r5.refs.get(id);
+  if (!ref) return;
   app.r5.active = id;
-  app.r5.grid = r5Grid(raw);
-  app.from = { point: toWorld(raw.lat, raw.lon), label: raw.adresse || id };
+  refreshR5Grid();
+  app.from = { point: toWorld(ref.lat, ref.lon), label: ref.adresse || id };
   app.to = null;
   app.solution = null;
   app.heatSolution = null;
@@ -1419,7 +1446,7 @@ function leaveR5() {
 }
 
 function updateR5Panel() {
-  const raw = app.r5.grids.get(app.r5.active);
+  const raw = r5CurrentGrid();
   $("tripResult").hidden = true;
   $("tripHint").hidden = true;
   const parts = [];
@@ -1429,7 +1456,18 @@ function updateR5Panel() {
     if (className) p.className = className;
     parts.push(p);
   };
-  line(`Temps porte à porte r5py, le ${raw.jour.slice(6)}/${raw.jour.slice(4, 6)}, départs ${raw.plage}.`, "r5-source");
+  line(R5_MODES[app.r5.mode], "trip-eyebrow");
+  if (!raw) {
+    line("Pas de calcul en voiture pour cette référence : elle n'a pas de parking (colonne parking de references.csv).", "r5-source");
+    $("r5Info").replaceChildren(...parts);
+    $("reach").textContent = "";
+    return;
+  }
+  if (app.r5.mode === "voiture") {
+    line(`Temps en voiture, circulation fluide, + ${raw.voitureExtremites ?? 0} min pour rejoindre sa voiture, se garer et marcher.`, "r5-source");
+  } else {
+    line(`Temps porte à porte r5py, le ${raw.jour.slice(6)}/${raw.jour.slice(4, 6)}, départs ${raw.plage}.`, "r5-source");
+  }
   if (app.to) {
     const minutes = r5TimeAt(app.to.point);
     line("Point cliqué", "trip-eyebrow");
@@ -1455,7 +1493,7 @@ function updateR5Panel() {
     }
     line("Points dans l'isochrone", "trip-eyebrow");
     parts.push(list);
-    const exact = points.every((point) => app.r5.matrix.has(`${app.r5.active}|${point.id}`));
+    const exact = points.every((point) => app.r5.matrix.has(`${app.r5.active}|${app.r5.mode}|${point.id}`));
     line(exact ? "D'après matrice.csv (temps exacts aux adresses)." : "D'après la grille (chargez matrice.csv pour les temps exacts).", "r5-source");
   } else {
     line("Chargez geocodage.csv pour afficher et compter les points.", "r5-source");
@@ -1514,6 +1552,13 @@ for (const id of ["r5Files", "r5Folder"]) {
     }
   });
 }
+
+$("r5Mode").addEventListener("change", (event) => {
+  app.r5.mode = event.target.value;
+  if (!app.r5.active) return;
+  refreshR5Grid();
+  recompute();
+});
 
 $("r5Reference").addEventListener("change", (event) => {
   if (event.target.value) {
