@@ -1741,6 +1741,7 @@ function setModeControls(mode) {
   // Tram et bus ne servent qu'au mode marche + transports en commun.
   $("busToggle").disabled = mode !== "tc";
   $("busToggle").closest("label").classList.toggle("is-disabled", mode !== "tc");
+  $("tramToggle").closest("label").classList.toggle("is-disabled", mode !== "tc");
 }
 
 $("modeSelect").addEventListener("change", (event) => {
