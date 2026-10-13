@@ -24,7 +24,6 @@ const ISOCHRONE_OPTIONS = [5, 15, 30, 60]; // cases proposées ; d'autres valeur
 const ISO_MIN = 1;
 const ISO_MAX = 90;
 const DEFAULT_ISOCHRONES = [15, 30];
-const REACH_MINUTES = 30;
 const SEED_STATIONS = 8;
 // Au doigt, on vise moins précisément et un tap bouge souvent de quelques pixels.
 const MARKER_HIT_RADIUS = { mouse: 18, touch: 30 };
@@ -1209,20 +1208,6 @@ function updatePanel() {
         }),
     );
   }
-
-  if (app.heatSolution) {
-    const source = heatSource();
-    const tram = app.data.stations.map((station, index) => ({ station, index })).filter(({ station }) => station.tram);
-    const reachable = tram.filter(({ station, index }) => {
-      const byFoot = walkMinutes(hypot(source.point, station.point));
-      return Math.min(byFoot, app.heatSolution.stationTime[index]) <= REACH_MINUTES;
-    }).length;
-    const percent = Math.round((reachable / tram.length) * 100);
-    const where = source === app.from ? "de ce départ" : "de cette arrivée";
-    $("reach").textContent = `${percent} % des stations de tram sont à moins de ${REACH_MINUTES} minutes ${where}${
-      app.includeBus ? " (tram + bus)" : ""
-    }.`;
-  }
 }
 
 /** Minutes en voiture ou à vélo du départ vers un point (null si inaccessible). */
@@ -1251,14 +1236,6 @@ function updateRoadPanel() {
     text.textContent = `${settings.label} : ${settings.describe}.`;
     item.append(badge, text);
     $("tripSteps").replaceChildren(item);
-  }
-  if (app.grid) {
-    const { cells, meta } = app.data;
-    const reachable = cells.filter((cell) => app.grid.times[cell.row * meta.gridCols + cell.col] <= REACH_MINUTES).length;
-    const percent = Math.round((reachable / cells.length) * 100);
-    const where = heatSource() === app.from ? "de ce départ" : "de cette arrivée";
-    const how = app.mode === "velo" ? "à vélo" : "en voiture";
-    $("reach").textContent = `${percent} % de la surface de la Métropole est à moins de ${REACH_MINUTES} minutes ${how} ${where} (calcul simplifié, extrémités comprises).`;
   }
 }
 
@@ -1698,7 +1675,6 @@ function updateR5Panel() {
       "r5-source",
     );
     $("r5Info").replaceChildren(...parts);
-    $("reach").textContent = "";
     return;
   }
   if (app.mode === "voiture") {
@@ -1746,7 +1722,6 @@ function updateR5Panel() {
     line("Chargez geocodage.csv pour afficher et compter les foyers.", "r5-source");
   }
   $("r5Info").replaceChildren(...parts);
-  $("reach").textContent = "";
 }
 
 function drawR5Points() {
