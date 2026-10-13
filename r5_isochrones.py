@@ -97,29 +97,52 @@ def read_table(path: Path) -> list[dict]:
     return [{(key or "").strip().lower(): (value or "").strip() for key, value in row.items()} for row in rows]
 
 
-def read_places(path: Path, geocoder: "BanGeocoder | None", kind: str) -> tuple[list[dict], list[dict]]:
-    """Lieux (id, label, lat, lon) et compte rendu du géocodage."""
+# Noms de colonnes acceptés (sans tenir compte des majuscules), dans l'ordre de préférence.
+COLUMNS = {
+    "id": ("id", "name", "nom", "identifiant"),
+    "adresse": ("adresse", "adresses", "address", "result_label", "label"),
+    "lat": ("lat", "latitude"),
+    "lon": ("lon", "lng", "longitude"),
+    "foyers": ("nb_foyer", "nb_foyers", "foyers", "poids"),
+}
+
+
+def column(row: dict, name: str) -> str:
+    """Première colonne remplie parmi les noms acceptés pour `name`."""
+    return next((row[key] for key in COLUMNS[name] if row.get(key)), "")
+
+
+def read_places(path: Path, geocoder: "BanGeocoder | None", kind: str) -> tuple[list[dict], list[dict], bool]:
+    """Lieux (id, label, lat, lon, foyers…), compte rendu du géocodage, et présence d'une colonne de foyers."""
     places, report = [], []
-    for index, row in enumerate(read_table(path), start=1):
-        place_id = row.get("id") or f"{kind}{index}"
-        lat = row.get("lat") or row.get("latitude")
-        lon = row.get("lon") or row.get("lng") or row.get("longitude")
-        address = row.get("adresse") or row.get("address") or ""
+    rows = read_table(path)
+    has_households = bool(rows) and any(key in rows[0] for key in COLUMNS["foyers"])
+    for index, row in enumerate(rows, start=1):
+        place_id = column(row, "id") or f"{kind}{index}"
+        lat, lon, address = column(row, "lat"), column(row, "lon"), column(row, "adresse")
+        households = column(row, "foyers") or "1"
+        try:
+            households = float(households.replace(",", "."))
+        except ValueError:
+            sys.exit(f"{path.name}, ligne {index} : nombre de foyers illisible « {households} ».")
         if lat and lon:
             found = {"lat": float(lat.replace(",", ".")), "lon": float(lon.replace(",", ".")), "qualite": "coordonnées fournies", "trouve": ""}
         elif address:
             if geocoder is None:
-                sys.exit(f"{path.name} : colonne « adresse » sans --ban (fichier BAN) pour la géocoder.")
+                sys.exit(f"{path.name} : colonne d'adresse sans --ban (fichier BAN) pour la géocoder.")
             found = geocoder.geocode(address)
         else:
-            sys.exit(f"{path.name}, ligne {index} : ni « adresse » ni « lat »/« lon ».")
-        report.append({"fichier": kind, "id": place_id, "adresse": address, **found})
+            sys.exit(f"{path.name}, ligne {index} : ni adresse ({', '.join(COLUMNS['adresse'])}) "
+                     f"ni coordonnées ({'/'.join(COLUMNS['lat'])} et {'/'.join(COLUMNS['lon'])}).")
+        report.append({"fichier": kind, "id": place_id, "adresse": address, **found,
+                       **({"foyers": f"{households:g}"} if has_households else {})})
         if found["lat"] is not None:
             places.append({"id": place_id, "label": address or place_id, "lat": found["lat"], "lon": found["lon"],
+                           "foyers": households,
                            # Colonnes facultatives des références : parking (oui/non) et type de commerce.
                            "parking": (row.get("parking") or "").strip().lower() in ("oui", "o", "yes", "y", "1", "vrai", "true"),
                            "type": (row.get("type") or "").strip()})
-    return places, report
+    return places, report, has_households
 
 
 # --- Géocodage local avec la Base Adresse Nationale ---------------------------
@@ -434,8 +457,8 @@ def main() -> None:
 
     # --- Lieux (géocodage avec mémoire) ---
     geocoder = CachedGeocoder(args.ban, cache_dir / "geocodage.json", args.tout_recalculer)
-    references, report = read_places(args.references, geocoder, "ref")
-    points, point_report = read_places(args.points, geocoder, "pt") if args.points else ([], [])
+    references, report, _ = read_places(args.references, geocoder, "ref")
+    points, point_report, has_households = read_places(args.points, geocoder, "pt") if args.points else ([], [], False)
     report += point_report
     geocoder.save()
     pd.DataFrame(report).to_csv(args.sortie / "geocodage.csv", index=False, sep=";", encoding="utf-8-sig")
@@ -544,15 +567,25 @@ def main() -> None:
                 matrix_rows += [{"reference": ref["id"], "mode": mode, "point": point["id"], "minutes": minutes}
                                 for point, minutes in zip(points, times)]
                 values = pd.Series(times, dtype=float)
-                count_rows.append({"reference": ref["id"], "mode": mode, "adresse": ref["label"],
-                                   **{f"<= {t} min": int((values <= t).sum()) for t in THRESHOLDS},
-                                   "inaccessibles": int(values.isna().sum())})
+                counts_row = {"reference": ref["id"], "mode": mode, "adresse": ref["label"],
+                              **{f"<= {t} min": int((values <= t).sum()) for t in THRESHOLDS},
+                              "inaccessibles": int(values.isna().sum())}
+                if has_households:
+                    # Colonne nb_foyer de points.csv : nombre de foyers sous chaque seuil.
+                    households = pd.Series([point["foyers"] for point in points], dtype=float)
+                    tidy = lambda x: int(x) if float(x).is_integer() else round(float(x), 2)  # 8 plutôt que 8.0
+                    counts_row.update({f"foyers <= {t} min": tidy(households[values <= t].sum()) for t in THRESHOLDS})
+                    counts_row["foyers inaccessibles"] = tidy(households[values.isna()].sum())
+                count_rows.append(counts_row)
         matrix = pd.DataFrame(matrix_rows)
         matrix["minutes"] = matrix["minutes"].astype(float)
         matrix.to_csv(args.sortie / "matrice.csv", index=False, sep=";", encoding="utf-8-sig")
         counts = pd.DataFrame(count_rows)
         counts.to_csv(args.sortie / "comptes.csv", index=False, sep=";", encoding="utf-8-sig")
-        print(counts.drop(columns="adresse").to_string(index=False))
+        print(counts[[c for c in counts.columns if c != "adresse" and not c.startswith("foyers")]].to_string(index=False))
+        if has_households:
+            print("Foyers :")
+            print(counts[["reference", "mode", *[c for c in counts.columns if c.startswith("foyers")]]].to_string(index=False))
 
     if args.sans_grille:
         print(f"Résultats dans {args.sortie}")

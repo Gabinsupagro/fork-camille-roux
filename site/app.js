@@ -1557,7 +1557,13 @@ async function loadR5Files(files) {
       // geocodage.csv : les points de la base (fichier « pt ») placés par le géocodage.
       app.r5.points = rows
         .filter((row) => row.fichier === "pt" && row.lat && row.lon)
-        .map((row) => ({ id: row.id, label: row.adresse || row.id, point: toWorld(Number(row.lat), Number(row.lon)) }));
+        .map((row) => ({
+          id: row.id,
+          label: row.adresse || row.id,
+          point: toWorld(Number(row.lat), Number(row.lon)),
+          // Colonne foyers (nb_foyer de points.csv) : absente des anciens fichiers.
+          foyers: row.foyers === undefined || row.foyers === "" ? null : Number(row.foyers.replace(",", ".")),
+        }));
       notes.push(`${app.r5.points.length} points`);
     } else if (columns.has("reference") && columns.has("point") && columns.has("minutes")) {
       app.r5.matrix = new Map(
@@ -1664,12 +1670,18 @@ function updateR5Panel() {
     const list = document.createElement("ul");
     list.className = "r5-counts";
     for (const threshold of thresholds) {
-      const count = times.filter((time) => time !== null && time <= threshold).length;
+      const inside = points.filter((_, i) => times[i] !== null && times[i] <= threshold);
+      const count = inside.length;
       const item = document.createElement("li");
       const label = document.createElement("span");
       label.textContent = `≤ ${threshold} min`;
       const value = document.createElement("strong");
       value.textContent = `${count} / ${points.length} points`;
+      if (points.some((point) => point.foyers !== null)) {
+        const sum = (list) => list.reduce((total, point) => total + (point.foyers ?? 0), 0);
+        const format = (x) => x.toLocaleString("fr-FR", { maximumFractionDigits: 1 });
+        value.textContent += ` · ${format(sum(inside))} / ${format(sum(points))} foyers`;
+      }
       item.append(label, value);
       list.append(item);
     }

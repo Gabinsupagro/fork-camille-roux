@@ -96,8 +96,15 @@ Données (une fois) dans `data/` :
 - pour géocoder des adresses sans les envoyer en ligne, le fichier de la Base Adresse Nationale de l'Hérault,
   `adresses-34.csv.gz`, sur [adresse.data.gouv.fr](https://adresse.data.gouv.fr/data/ban/adresses/latest/csv/).
 
-Adresses dans `prive/` (non versionné), en CSV (`;` ou `,`) avec une colonne `id` et soit `adresse`
-(« 12 rue de la Loge 34000 Montpellier »), soit `lat` et `lon` :
+Adresses dans `prive/` (non versionné), en CSV (`;` ou `,`). Noms de colonnes acceptés, sans tenir compte des
+majuscules :
+
+- identifiant : `name`, `id`, `nom` ;
+- adresse (« 12 rue de la Loge 34000 Montpellier ») : `Adresses`, `adresse`, `result_label`, `address`, `label` ;
+- ou coordonnées, prioritaires quand elles sont remplies : `Latitude`/`lat` et `Longitude`/`lon` ;
+- `points.csv` seulement, facultatif : `nb_foyer` (nombre de foyers à l'adresse, 1 par défaut) ; `comptes.csv` donne
+  alors aussi le nombre de foyers sous chaque seuil, et la carte l'affiche à côté du nombre de points ;
+- `references.csv` seulement : `type` et `parking` (voir plus bas).
 
 ```bash
 python r5_isochrones.py --osm data/languedoc-roussillon-latest.osm.pbf \
