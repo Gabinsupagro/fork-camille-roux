@@ -735,3 +735,40 @@ output {
   padding: 6px 12px;
   font-size: 0.9rem;
 }
+
+/* Isochrone choisie par l'utilisateur : champ « Autre » et bouton pour la retirer. */
+.iso-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.iso-custom input {
+  width: 72px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.iso-custom .button {
+  padding: 6px 12px;
+  font-size: 0.9rem;
+}
+
+.pill-remove {
+  margin: 0 -4px 0 2px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pill-remove:hover {
+  color: var(--ink);
+}

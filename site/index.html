@@ -19,7 +19,7 @@
     <link rel="icon" href="./favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
 
-    <link rel="stylesheet" href="./styles.css?v=13" />
+    <link rel="stylesheet" href="./styles.css?v=14" />
   </head>
   <body>
 
@@ -114,11 +114,14 @@
           <div id="isoToggles" class="control-group">
             <span class="control-label">Isochrones</span>
             <label class="pill-toggle"><input type="checkbox" value="5" /> 5 min</label>
-            <label class="pill-toggle"><input type="checkbox" value="10" /> 10 min</label>
             <label class="pill-toggle"><input type="checkbox" value="15" checked /> 15 min</label>
             <label class="pill-toggle"><input type="checkbox" value="30" checked /> 30 min</label>
-            <label class="pill-toggle"><input type="checkbox" value="45" /> 45 min</label>
             <label class="pill-toggle"><input type="checkbox" value="60" /> 60 min</label>
+            <form id="isoCustom" class="iso-custom" autocomplete="off">
+              <label class="visually-hidden" for="isoCustomValue">Autre isochrone, en minutes</label>
+              <input id="isoCustomValue" type="number" min="1" max="90" step="1" placeholder="Autre" />
+              <button type="submit" class="button">Ajouter</button>
+            </form>
           </div>
           <div class="control-group">
             <label class="control-label" for="maxRange">Échelle</label>
@@ -267,6 +270,6 @@
     </main>
 
     <div id="toast" class="toast" role="status" hidden></div>
-    <script type="module" src="./app.js?v=32"></script>
+    <script type="module" src="./app.js?v=33"></script>
   </body>
 </html>

@@ -26,8 +26,8 @@ Ouvrir la page (en local : voir « Lancer » ; en ligne : l'adresse GitHub Pages
    vers chaque foyer (marche + transports en commun, vélo, et voiture s'il y a un parking), puis propose la liste des
    points de vente : la carte montre ses isochrones et les foyers, le panneau les foyers et personnes dans chaque
    isochrone ;
-4. « Récapitulatif (CSV) » : le tableau foyers et personnes par point de vente, mode et isochrone (5, 10, 15, 30, 45,
-   60 min) ; « Contrôle des adresses » : comment chaque adresse a été placée (et celles non trouvées).
+4. « Récapitulatif (CSV) » : le tableau foyers et personnes par point de vente, mode et isochrone cochée (5, 15, 30,
+   60 min, et toute valeur ajoutée avec « Autre », de 1 à 90 min) ; « Contrôle des adresses » : comment chaque adresse a été placée (et celles non trouvées).
 
 Rien ne quitte le navigateur : les fichiers sont lus sur place, et une règle de sécurité de la page
 (Content-Security-Policy) lui interdit de contacter un autre site que celui des tuiles du fond de carte (qui ne voit
@@ -148,7 +148,7 @@ Résultats dans `sortie/` (non versionné) :
 - `matrice.csv` : temps de chaque référence vers chaque point, en minutes (vide si inaccessible en 90 min) ;
 - `comptes.csv` : nombre de points sous chaque seuil, par référence ;
 - `recapitulatif.csv` : pour chaque référence, chaque mode (marche + transports en commun, vélo, voiture) et chaque
-  isochrone de la carte (5, 10, 15, 30, 45 et 60 min), le nombre de foyers et de personnes dedans ; une ligne vide
+  isochrone de la carte (5, 15, 30 et 60 min ; `--isochrones 10,20,45` pour d'autres valeurs), le nombre de foyers et de personnes dedans ; une ligne vide
   avec une remarque quand un mode n'est pas calculé (voiture sans parking) ;
 - `isochrones.geojson` : isochrones par référence et par seuil (QGIS) ;
 - `grilles/<id>.json` : temps par case de 50 m, dans le repère de la carte du site, pour l'afficher ; compressés sans

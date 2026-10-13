@@ -15,13 +15,14 @@ const ADDRESSES_URL = new URL("./data/adresses.bin?v=1", import.meta.url);
 const HORAIRES_URL = new URL("./data/horaires.bin?v=1", import.meta.url);
 const TOOL_MODEL = "page-2|horaires-1|routes-1";
 const TOOL_MAX_MINUTES = 90; // au-delà, un foyer est jugé inaccessible (comme r5_isochrones.py)
-const RECAP_THRESHOLDS = [5, 10, 15, 30, 45, 60];
 const MODE_LABELS = { tc: "marche + transports en commun", velo: "vélo", voiture: "voiture" };
 
 const DEFAULT_FROM = { lat: 43.60853, lon: 3.8799, label: "Place de la Comédie" };
 const DEFAULT_MAX = 45;
 const MIN_MAX = 5; // borne basse du curseur « Échelle » (doit correspondre au min de #maxRange)
-const ISOCHRONE_OPTIONS = [5, 10, 15, 30, 45, 60];
+const ISOCHRONE_OPTIONS = [5, 15, 30, 60]; // cases proposées ; d'autres valeurs s'ajoutent avec « Autre »
+const ISO_MIN = 1;
+const ISO_MAX = 90;
 const DEFAULT_ISOCHRONES = [15, 30];
 const REACH_MINUTES = 30;
 const SEED_STATIONS = 8;
@@ -1318,9 +1319,10 @@ function restoreFromUrl() {
       .get("iso")
       .split(",")
       .map(Number)
-      .filter((value) => ISOCHRONE_OPTIONS.includes(value));
+      .filter((value) => Number.isInteger(value) && value >= ISO_MIN && value <= ISO_MAX);
   }
-  for (const input of $("isoToggles").querySelectorAll("input")) input.checked = app.isochrones.includes(Number(input.value));
+  for (const value of app.isochrones) addIsochrone(value, { quiet: true });
+  for (const input of $("isoToggles").querySelectorAll("input[type=checkbox]")) input.checked = app.isochrones.includes(Number(input.value));
   const background = params.get("fond");
   app.showBasemap = background !== "0";
   if (background in PROVIDERS) app.provider = background;
@@ -1845,11 +1847,58 @@ $("busToggle").addEventListener("change", (event) => {
   syncUrl();
 });
 
-$("isoToggles").addEventListener("change", () => {
-  app.isochrones = [...$("isoToggles").querySelectorAll("input:checked")].map((input) => Number(input.value));
+function isochronesChanged() {
+  app.isochrones = [...$("isoToggles").querySelectorAll("input[type=checkbox]:checked")].map((input) => Number(input.value));
   if (app.r5.active || app.tool.active) updatePanel(); // comptes de foyers par isochrone
   requestRender();
   syncUrl();
+}
+
+/** Ajoute (ou coche) l'isochrone `value` minutes ; les valeurs ajoutées ont un bouton pour les retirer. */
+function addIsochrone(value, { quiet = false } = {}) {
+  const container = $("isoToggles");
+  const existing = container.querySelector(`input[type=checkbox][value="${value}"]`);
+  if (existing) {
+    existing.checked = true;
+  } else {
+    const label = document.createElement("label");
+    label.className = "pill-toggle";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = String(value);
+    input.checked = true;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "pill-remove";
+    remove.textContent = "×";
+    remove.setAttribute("aria-label", `Retirer l'isochrone ${value} min`);
+    remove.addEventListener("click", (event) => {
+      event.preventDefault();
+      label.remove();
+      isochronesChanged();
+    });
+    label.append(input, ` ${value} min`, remove);
+    // Rangée dans l'ordre des valeurs, avant le champ « Autre ».
+    const next = [...container.querySelectorAll("label.pill-toggle")].find((other) => Number(other.querySelector("input").value) > value);
+    container.insertBefore(label, next ?? $("isoCustom"));
+  }
+  if (!quiet) isochronesChanged();
+}
+
+$("isoToggles").addEventListener("change", (event) => {
+  if (event.target.type === "checkbox") isochronesChanged();
+});
+
+$("isoCustom").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const field = $("isoCustomValue");
+  const value = Number(field.value);
+  if (!Number.isInteger(value) || value < ISO_MIN || value > ISO_MAX) {
+    toast(`Une isochrone va de ${ISO_MIN} à ${ISO_MAX} minutes, en minutes entières.`);
+    return;
+  }
+  field.value = "";
+  addIsochrone(value);
 });
 
 $("maxRange").addEventListener("input", (event) => {
@@ -2286,11 +2335,16 @@ function downloadCsv(name, header, rows) {
 
 function exportRecap() {
   const { foyers, ventes } = app.tool;
+  const thresholds = [...app.isochrones].sort((a, b) => a - b);
+  if (!thresholds.length) {
+    toast("Cochez au moins une isochrone : le récapitulatif compte les foyers dans les isochrones cochées.", 6000);
+    return;
+  }
   const rows = [];
   for (const vente of ventes) {
     for (const mode of ["tc", "velo", "voiture"]) {
       const times = app.tool.times.get(`${vente.id}|${mode}`);
-      for (const threshold of RECAP_THRESHOLDS) {
+      for (const threshold of thresholds) {
         if (!times) {
           rows.push([vente.id, vente.label, MODE_LABELS[mode], threshold, null, null,
             mode === "voiture" ? "pas de parking : voiture non calculée" : "non calculé"]);

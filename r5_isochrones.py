@@ -44,7 +44,7 @@ import build_data
 
 ROOT = Path(__file__).resolve().parent
 THRESHOLDS = [5, 10, 15, 20, 30, 45, 60]
-RECAP_THRESHOLDS = [5, 10, 15, 30, 45, 60]  # les isochrones proposées sur la carte
+RECAP_THRESHOLDS = "5,15,30,60"  # isochrones du récapitulatif par défaut : celles proposées sur la carte
 MODE_LABELS = {"tc": "marche + transports en commun", "velo": "vélo", "voiture": "voiture"}
 
 
@@ -73,6 +73,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stress-velo", type=int, choices=[1, 2, 3, 4], default=3,
                         help="niveau de stress du trafic (LTS) le plus élevé accepté à vélo ; au-delà, le cycliste "
                              "pousse son vélo à pied ou fait un détour (défaut : 3, celui de R5)")
+    parser.add_argument("--isochrones", default=RECAP_THRESHOLDS,
+                        help="isochrones du récapitulatif, en minutes, séparées par des virgules (défaut : 5,15,30,60)")
     parser.add_argument("--sans-grille", action="store_true", help="matrice et comptes seulement, sans grille ni isochrones")
     parser.add_argument("--tout-recalculer", action="store_true",
                         help="ignore le cache (sortie/cache/) et recalcule tout, géocodage compris")
@@ -598,11 +600,15 @@ def main() -> None:
         # Chaque point est un foyer ; nb_personne (1 par défaut) donne ses personnes.
         people = pd.Series([point["personnes"] for point in points], dtype=float)
         tidy = lambda x: int(x) if float(x).is_integer() else round(float(x), 2)
+        try:
+            recap_thresholds = sorted({int(value) for value in args.isochrones.split(",") if value.strip()})
+        except ValueError:
+            sys.exit(f"--isochrones : des minutes entières séparées par des virgules, pas « {args.isochrones} »")
         recap = []
         for ref in references:
             for mode in ("tc", "velo", "voiture"):
                 values = times_by.get((ref["id"], mode))
-                for threshold in RECAP_THRESHOLDS:
+                for threshold in recap_thresholds:
                     row = {"reference": ref["id"], "adresse": ref["label"], "mode": MODE_LABELS[mode],
                            "isochrone (min)": threshold}
                     if values is None:
