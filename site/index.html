@@ -3,6 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Confidentialité : la page ne peut rien envoyer ni charger ailleurs que sur son propre site, sauf les images
+         des tuiles du fond de carte. Les fichiers importés restent dans le navigateur. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data: blob: https://tile.openstreetmap.org https://*.basemaps.cartocdn.com; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
     <title>Montpellier porte à porte · Temps de trajet dans la Métropole</title>
     <meta
       name="description"
@@ -13,7 +19,7 @@
     <link rel="icon" href="./favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
 
-    <link rel="stylesheet" href="./styles.css?v=12" />
+    <link rel="stylesheet" href="./styles.css?v=13" />
   </head>
   <body>
 
@@ -78,6 +84,23 @@
         </div>
 
         <div class="controls">
+          <div class="control-group data-group">
+            <span class="control-label">Vos données</span>
+            <!-- Les fichiers sont lus par le navigateur : ils ne sont envoyés nulle part. -->
+            <label class="button primary file-button" title="Fichier CSV des foyers : identifiant, adresse (ou latitude et longitude), nb_personne">
+              Foyers…<input id="foyersFile" type="file" accept=".csv,text/csv" />
+            </label>
+            <label class="button primary file-button" title="Fichier CSV des points de vente : identifiant, adresse (ou latitude et longitude), type, parking">
+              Points de vente…<input id="ventesFile" type="file" accept=".csv,text/csv" />
+            </label>
+            <select id="venteSelect" aria-label="Point de vente" hidden></select>
+            <button id="exportRecap" type="button" class="button" hidden title="Foyers et personnes dans chaque isochrone, pour chaque point de vente et chaque mode">Récapitulatif (CSV)</button>
+            <button id="exportCheck" type="button" class="button" hidden title="Comment chaque adresse a été placée sur la carte">Contrôle des adresses</button>
+            <button id="saveMemory" type="button" class="button" title="Fichier de sauvegarde des temps déjà calculés, à restaurer sur un autre ordinateur ou navigateur">Sauvegarder les calculs</button>
+            <label class="button file-button" title="Reprendre une sauvegarde des calculs">
+              Restaurer…<input id="restoreMemory" type="file" accept=".json,application/json" />
+            </label>
+          </div>
           <div class="control-group">
             <label class="control-label" for="modeSelect">Mode</label>
             <select id="modeSelect" aria-label="Mode de déplacement">
@@ -121,16 +144,29 @@
             </label>
             <select id="r5Reference" aria-label="Adresse de référence r5py" hidden></select>
           </div>
-          <div class="control-group actions">
-            <button id="locate" type="button" class="button">Ma position</button>
-            <button id="swap" type="button" class="button">Inverser</button>
-            <button id="share" type="button" class="button primary">Partager</button>
-          </div>
         </div>
         <p id="reach" class="reach"></p>
       </section>
 
       <section class="notes">
+        <h2>Vos données</h2>
+        <p>
+          «&nbsp;Foyers…&nbsp;» et «&nbsp;Points de vente…&nbsp;» importent deux fichiers CSV (séparateur «&nbsp;;&nbsp;» ou
+          «&nbsp;,&nbsp;», tels qu'Excel les enregistre). Colonnes reconnues&nbsp;: un identifiant (<code>name</code> ou
+          <code>id</code>), une adresse (<code>result_label</code>, <code>Adresses</code> ou <code>adresse</code>) ou des
+          coordonnées (<code>Latitude</code>, <code>Longitude</code>)&nbsp;; pour les foyers, <code>nb_personne</code>
+          (1 par défaut)&nbsp;; pour les points de vente, <code>parking</code> (oui/non, la voiture n'est calculée qu'avec
+          parking).
+        </p>
+        <p>
+          Tout se passe dans votre navigateur&nbsp;: les fichiers ne sont envoyés nulle part, les adresses sont placées sur la
+          carte avec un index de la Base Adresse Nationale fourni avec le site, et la page n'a le droit de contacter aucun
+          autre site que celui des tuiles du fond de carte. Les temps calculés restent en mémoire dans ce navigateur&nbsp;:
+          en important plus tard des fichiers mis à jour, seuls les nouveaux foyers et points de vente sont calculés.
+          «&nbsp;Sauvegarder les calculs&nbsp;» les met dans un fichier, à «&nbsp;Restaurer…&nbsp;» sur un autre ordinateur.
+          «&nbsp;Récapitulatif (CSV)&nbsp;» donne, pour chaque point de vente, chaque mode et chaque isochrone, le nombre de
+          foyers et de personnes&nbsp;; «&nbsp;Contrôle des adresses&nbsp;» dit comment chaque adresse a été placée.
+        </p>
         <h2>Comment c'est calculé</h2>
         <p>
           <strong>Carte du site</strong> (calcul simplifié dans le navigateur, refait à chaque déplacement du départ), sur
@@ -150,6 +186,11 @@
             pour des trajets de moins de 30&nbsp;min.
           </li>
         </ul>
+        <p>
+          Les comptes de «&nbsp;Vos données&nbsp;» utilisent ces mêmes calculs, bus compris, jusqu'à 90&nbsp;min&nbsp;;
+          pour les transports en commun, c'est un calcul provisoire, qui sera remplacé par un calcul porte à porte par les
+          rues proche de r5py.
+        </p>
         <p>
           <strong>Résultats r5py</strong> (calculés sur votre ordinateur avec <code>r5_isochrones.py</code>)&nbsp;: temps
           porte à porte entre chaque adresse de référence et chaque foyer, en suivant les rues OpenStreetMap, et grille de
@@ -223,6 +264,6 @@
     </main>
 
     <div id="toast" class="toast" role="status" hidden></div>
-    <script type="module" src="./app.js?v=28"></script>
+    <script type="module" src="./app.js?v=30"></script>
   </body>
 </html>

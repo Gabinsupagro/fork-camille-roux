@@ -450,6 +450,7 @@ h1 {
 }
 
 #r5Reference,
+#venteSelect,
 #modeSelect {
   max-width: 240px;
   padding: 6px 10px;
@@ -723,4 +724,14 @@ output {
   .control-group.actions {
     margin-left: 0;
   }
+}
+
+/* Vos données : sur une ligne à part, en tête des réglages. */
+.data-group {
+  flex-basis: 100%;
+}
+
+.data-group .button {
+  padding: 6px 12px;
+  font-size: 0.9rem;
 }

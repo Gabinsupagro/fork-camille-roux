@@ -171,8 +171,10 @@ class BanGeocoder:
 
     def __init__(self, path: Path):
         opener = gzip.open if path.suffix == ".gz" else open
-        self.numbers: dict[tuple[str, str], dict[str, tuple[float, float]]] = {}
-        self.streets_by_postcode: dict[str, set[str]] = {}
+        # Voie = (code postal, nom normalisé, commune) : un code postal couvre parfois plusieurs communes qui ont
+        # des voies de même nom, dont les numéros ne doivent pas se mélanger.
+        self.numbers: dict[tuple[str, str, str], dict[str, tuple[float, float]]] = {}
+        self.streets_by_postcode: dict[str, set[tuple[str, str]]] = {}
         self.streets_by_town: dict[str, set[str]] = {}
         self.postcodes_by_town: dict[str, set[str]] = {}
         with opener(path, "rt", encoding="utf-8") as handle:
@@ -181,8 +183,8 @@ class BanGeocoder:
                 postcode = row["code_postal"]
                 town = normalize(row["nom_commune"])
                 number = (row["numero"] or "") + REPETITIONS.get((row.get("rep") or "").lower(), (row.get("rep") or "").lower())
-                self.numbers.setdefault((postcode, street), {})[number] = (float(row["lat"]), float(row["lon"]))
-                self.streets_by_postcode.setdefault(postcode, set()).add(street)
+                self.numbers.setdefault((postcode, street, town), {})[number] = (float(row["lat"]), float(row["lon"]))
+                self.streets_by_postcode.setdefault(postcode, set()).add((street, town))
                 self.streets_by_town.setdefault(town, set()).add(street)
                 self.postcodes_by_town.setdefault(town, set()).add(postcode)
         count = sum(len(numbers) for numbers in self.numbers.values())
@@ -197,18 +199,20 @@ class BanGeocoder:
         if postcode_match:
             postcode = postcode_match.group(1)
             street_text, town = rest[: postcode_match.start()].strip(), rest[postcode_match.end():].strip()
-            candidates = [(postcode, street) for street in self.streets_by_postcode.get(postcode, ())]
+            candidates = [(postcode, street, t) for street, t in self.streets_by_postcode.get(postcode, ())]
+            in_town = [c for c in candidates if c[2] == town]
+            candidates = in_town or candidates
         else:
             # Sans code postal : la commune est à la fin, on essaie les plus longues d'abord.
             town = next((t for t in sorted(self.streets_by_town, key=len, reverse=True) if rest.endswith(" " + t)), "")
             if not town:
                 return missing
             street_text = rest[: -len(town)].strip()
-            candidates = [(code, street) for code in self.postcodes_by_town[town] for street in self.streets_by_town[town]
-                          if (code, street) in self.numbers]
+            candidates = [(code, street, town) for code in self.postcodes_by_town[town] for street in self.streets_by_town[town]
+                          if (code, street, town) in self.numbers]
         if not candidates:
             return missing
-        streets = {street: (code, street) for code, street in candidates}
+        streets = {street: (code, street, t) for code, street, t in candidates}
         if street_text in streets:
             key, quality = streets[street_text], "voie exacte"
         else:
@@ -239,7 +243,8 @@ class CachedGeocoder:
 
     def __init__(self, ban: Path | None, cache_path: Path, reset: bool):
         self.ban, self.path, self.geocoder = ban, cache_path, None
-        self.stamp = f"{ban.stat().st_size}-{int(ban.stat().st_mtime)}" if ban else None
+        # « v2 » : géocodeur corrigé (voies homonymes de communes qui partagent un code postal) ; l'ancien cache est refait.
+        self.stamp = f"v2-{ban.stat().st_size}-{int(ban.stat().st_mtime)}" if ban else None
         saved = {} if reset or not cache_path.exists() else json.loads(cache_path.read_text(encoding="utf-8"))
         self.known = saved.get("adresses", {}) if saved.get("ban") in (self.stamp, None) or ban is None else {}
         self.hits = self.misses = 0

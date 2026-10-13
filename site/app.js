@@ -3,11 +3,18 @@
 
 import { createBasemap, DEFAULT_PROVIDER, PROVIDERS } from "./basemap.js?v=2";
 import { loadRoads, ROAD_MODES } from "./roads.js?v=1";
+import { loadAddresses } from "./adresses.js?v=1";
 
 const DATA_URL = new URL("./data/commute_map_data.json?v=7", import.meta.url);
 const ROADS_URL = new URL("./data/routes.bin?v=1", import.meta.url);
 const ROAD_LIMIT_MINUTES = 100; // le calcul voiture et vélo s'arrête au-delà (curseur Échelle : 90 au plus)
-const GEOCODER_URL = "https://api-adresse.data.gouv.fr/search/";
+const ADDRESSES_URL = new URL("./data/adresses.bin?v=1", import.meta.url);
+// Tout changement des données ou des méthodes de calcul de la page change cette version : les temps gardés en
+// mémoire dans le navigateur sont alors recalculés.
+const TOOL_MODEL = "page-1|data-7|routes-1";
+const TOOL_MAX_MINUTES = 90; // au-delà, un foyer est jugé inaccessible (comme r5_isochrones.py)
+const RECAP_THRESHOLDS = [5, 10, 15, 30, 45, 60];
+const MODE_LABELS = { tc: "marche + transports en commun", velo: "vélo", voiture: "voiture" };
 
 const DEFAULT_FROM = { lat: 43.60853, lon: 3.8799, label: "Place de la Comédie" };
 const DEFAULT_MAX = 45;
@@ -92,6 +99,11 @@ const app = {
   // grids : clé « référence|mode » (mode tc = marche + transports en commun, voiture, velo) ; refs : une entrée par référence.
   r5: { grids: new Map(), refs: new Map(), points: [], matrix: new Map(), active: null, grid: null },
   hoverStop: null, // arrêt survolé (indice dans data.stations)
+  addresses: null, // index des adresses de la Métropole (géocodage local)
+  addressesLoading: null,
+  // Données importées par l'utilisateur (lues dans le navigateur, jamais envoyées) et temps calculés :
+  // times : clé « id du point de vente|mode » → minutes vers chaque foyer (NaN : inaccessible).
+  tool: { foyers: [], ventes: [], report: [], times: new Map(), active: null, busy: false },
   drag: null,
   pointers: new Map(),
   frameRequested: false,
@@ -249,7 +261,7 @@ function stationUsable(index) {
 }
 
 /** Plus courts chemins depuis un point : temps d'arrivée à chaque arrêt + prédécesseurs. */
-function solveFrom(point) {
+function solveFrom(point, includeBus = app.includeBus) {
   const { graph, data } = app;
   const access = data.meta.stationAccessPenalty;
   const dist = new Float64Array(graph.count).fill(Infinity);
@@ -266,11 +278,11 @@ function solveFrom(point) {
       .filter((seed) => keep(data.stations[seed.index]))
       .sort((a, b) => a.walk - b.walk)
       .slice(0, SEED_STATIONS);
-  const seeds = [...nearest((station) => station.tram), ...(app.includeBus ? nearest((station) => !station.tram) : [])];
+  const seeds = [...nearest((station) => station.tram), ...(includeBus ? nearest((station) => !station.tram) : [])];
 
   for (const seed of seeds) {
     for (const state of data.stationStates[seed.index]) {
-      if (!app.includeBus && graph.isBus[state]) continue;
+      if (!includeBus && graph.isBus[state]) continue;
       const time = seed.walk + graph.wait[state];
       if (time < dist[state]) {
         dist[state] = time;
@@ -285,7 +297,7 @@ function solveFrom(point) {
     const base = dist[state];
     for (let e = graph.offsets[state]; e < graph.offsets[state + 1]; e += 1) {
       const next = graph.targets[e];
-      if (!app.includeBus && graph.isBus[next]) continue;
+      if (!includeBus && graph.isBus[next]) continue;
       const time = base + graph.weights[e];
       if (time < dist[next]) {
         dist[next] = time;
@@ -963,6 +975,7 @@ function render() {
   // Avec les noms du fond de carte, ceux des communes feraient doublon.
   if (!(tilesShown && app.basemap.hasLabels)) drawCommuneNames();
   drawR5Points();
+  drawFoyers();
   drawStops();
   if (app.to) {
     let minutes = app.solution ? formatMinutes(travelTo(app.solution, app.to.point).minutes) : null;
@@ -1074,8 +1087,9 @@ function recompute({ fast = false } = {}) {
 
 function setFrom(point, label = null, { quiet = false, fast = false } = {}) {
   if (!isOnLand(point)) return false;
-  // Déplacer le départ quitte les résultats r5py, calculés pour l'adresse de référence seulement.
+  // Déplacer le départ quitte les résultats r5py et le point de vente choisi, calculés pour eux seulement.
   if (app.r5.active) leaveR5();
+  if (app.tool.active) leaveTool();
   app.from = { point, label: label || describePlace(point) };
   recompute({ fast });
   if (!quiet) syncUrl();
@@ -1112,7 +1126,8 @@ function setHeatFrom(source) {
 
 function updatePanel() {
   $("tripFrom").textContent = app.from?.label ?? "—";
-  $("r5Info").hidden = !app.r5.active;
+  $("r5Info").hidden = !app.r5.active && !app.tool.active;
+  if (app.tool.active && !app.r5.active) updateToolPanel(); // comptes de foyers, sous l'itinéraire habituel
   if (app.r5.active) {
     updateR5Panel();
     return;
@@ -1607,6 +1622,7 @@ function refreshR5Grid() {
 function activateR5(id) {
   const ref = app.r5.refs.get(id);
   if (!ref) return;
+  if (app.tool.active) leaveTool();
   app.r5.active = id;
   refreshR5Grid();
   app.from = { point: toWorld(ref.lat, ref.lon), label: ref.adresse || id };
@@ -1796,7 +1812,7 @@ $("busToggle").addEventListener("change", (event) => {
 
 $("isoToggles").addEventListener("change", () => {
   app.isochrones = [...$("isoToggles").querySelectorAll("input:checked")].map((input) => Number(input.value));
-  if (app.r5.active) updatePanel(); // comptes de points par isochrone
+  if (app.r5.active || app.tool.active) updatePanel(); // comptes de foyers par isochrone
   requestRender();
   syncUrl();
 });
@@ -1837,16 +1853,6 @@ $("heatOpacity").addEventListener("input", (event) => {
   syncUrl();
 });
 
-$("swap").addEventListener("click", () => {
-  if (!app.to) {
-    toast("Posez d'abord une arrivée sur la carte.");
-    return;
-  }
-  [app.from, app.to] = [app.to, app.from];
-  setHeatFrom("from");
-  syncUrl();
-});
-
 $("removeTo").addEventListener("click", removeTo);
 $("heatFrom").addEventListener("click", (event) => {
   const source = event.target.closest("button")?.dataset.source;
@@ -1856,50 +1862,433 @@ $("heatFrom").addEventListener("click", (event) => {
   }
 });
 
-$("locate").addEventListener("click", () => {
-  if (!navigator.geolocation) {
-    toast("La géolocalisation n'est pas disponible.");
-    return;
-  }
-  navigator.geolocation.getCurrentPosition(
-    ({ coords }) => {
-      if (!setFrom(toWorld(coords.latitude, coords.longitude), "Ma position")) toast("Vous êtes hors de la Métropole.");
-    },
-    (error) =>
-      toast(
-        error.code === error.PERMISSION_DENIED
-          ? "Position refusée : autorisez la localisation, ou cherchez une adresse."
-          : "Impossible d'obtenir votre position : cherchez plutôt une adresse.",
-      ),
-    // Sans délai maximal, certains navigateurs intégrés (X, Reddit…) n'appellent jamais aucun des deux rappels.
-    { timeout: 10000, maximumAge: 60000 },
-  );
-});
+// --- Vos données : foyers et points de vente importés, calculés dans la page ---------
+// Les fichiers sont lus par le navigateur (rien n'est envoyé) ; les adresses sont géocodées avec l'index local ;
+// les temps sont gardés dans le navigateur (IndexedDB), par position : réimporter des fichiers mis à jour ne
+// recalcule que les nouveaux lieux.
 
-$("share").addEventListener("click", async () => {
-  const url = location.href;
-  if (navigator.share) {
-    try {
-      await navigator.share({ title: document.title, url });
-      return;
-    } catch {
-      /* partage annulé : on retombe sur la copie */
+function ensureAddresses() {
+  if (app.addresses) return Promise.resolve(app.addresses);
+  app.addressesLoading ??= loadAddresses(ADDRESSES_URL)
+    .then((index) => (app.addresses = index))
+    .catch((error) => {
+      app.addressesLoading = null;
+      throw error;
+    });
+  return app.addressesLoading;
+}
+
+/** Texte d'un fichier CSV, en UTF-8 ou, à défaut, en Windows-1252 (CSV enregistrés par Excel en français). */
+async function readText(file) {
+  const bytes = await file.arrayBuffer();
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder("windows-1252").decode(bytes);
+  }
+}
+
+// Noms de colonnes acceptés (minuscules), comme r5_isochrones.py.
+const TOOL_COLUMNS = {
+  id: ["id", "name", "nom", "identifiant"],
+  adresse: ["adresse", "adresses", "address", "result_label", "label"],
+  lat: ["lat", "latitude"],
+  lon: ["lon", "lng", "longitude"],
+  personnes: ["nb_personne", "nb_personnes", "personnes"],
+};
+const column = (row, name) => TOOL_COLUMNS[name].map((key) => row[key]).find((value) => value) ?? "";
+const number = (text) => Number(String(text).replace(",", "."));
+const placeKey = (point) => `${point[0].toFixed(1)},${point[1].toFixed(1)}`;
+
+/** Lieux d'un fichier importé, géocodés ; le compte rendu va dans app.tool.report. */
+async function readPlaces(file, kind) {
+  const rows = parseCsv(await readText(file));
+  if (!rows.length) throw new Error(`${file.name} : aucune ligne`);
+  const index = await ensureAddresses();
+  const places = [];
+  const report = [];
+  rows.forEach((row, i) => {
+    const id = column(row, "id") || `${kind === "foyers" ? "F" : "V"}${i + 1}`;
+    const address = column(row, "adresse");
+    const lat = column(row, "lat");
+    const lon = column(row, "lon");
+    let found;
+    if (lat && lon && Number.isFinite(number(lat)) && Number.isFinite(number(lon))) {
+      found = { point: toWorld(number(lat), number(lon)), qualite: "coordonnées fournies", trouve: "" };
+    } else if (address) {
+      found = index.geocode(address);
+    } else {
+      found = { point: null, qualite: "ni adresse ni coordonnées", trouve: "" };
+    }
+    if (found.point && !isOnLand(found.point)) found = { point: null, qualite: "hors de la Métropole", trouve: found.trouve };
+    report.push({ fichier: kind === "foyers" ? "foyer" : "point de vente", id, adresse: address, qualite: found.qualite, trouve: found.trouve });
+    if (!found.point) return;
+    const people = column(row, "personnes");
+    places.push({
+      id,
+      label: address || id,
+      point: found.point,
+      key: placeKey(found.point),
+      personnes: people === "" ? 1 : number(people),
+      parking: ["oui", "o", "yes", "y", "1", "vrai", "true"].includes((row.parking ?? "").toLowerCase()),
+    });
+  });
+  const bad = places.filter((place) => !Number.isFinite(place.personnes));
+  if (bad.length) throw new Error(`${file.name} : nombre de personnes illisible (${bad[0].id})`);
+  return { places, report };
+}
+
+// Mémoire des calculs : une base IndexedDB, clé « modèle|mode|point de vente » → { position du foyer: minutes }.
+const toolDb = (() => {
+  let opening = null;
+  const open = () =>
+    (opening ??= new Promise((resolve, reject) => {
+      const request = indexedDB.open("porte-a-porte", 1);
+      request.onupgradeneeded = () => request.result.createObjectStore("temps");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    }));
+  const run = async (mode, action) => {
+    const db = await open();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction("temps", mode);
+      const request = action(transaction.objectStore("temps"));
+      transaction.oncomplete = () => resolve(request?.result);
+      transaction.onerror = () => reject(transaction.error);
+    });
+  };
+  return {
+    get: (key) => run("readonly", (store) => store.get(key)),
+    put: (key, value) => run("readwrite", (store) => store.put(value, key)),
+    entries: async () => {
+      const keys = await run("readonly", (store) => store.getAllKeys());
+      const values = await run("readonly", (store) => store.getAll());
+      return keys.map((key, i) => [key, values[i]]);
+    },
+  };
+})();
+
+/** Minutes du point de vente vers chaque foyer, dans un mode (NaN : inaccessible ou au-delà de 90 min). */
+function computeTimes(vente, mode, foyers) {
+  const out = new Float32Array(foyers.length).fill(NaN);
+  if (mode === "tc") {
+    const solution = solveFrom(vente.point, true); // bus compris, comme r5_isochrones.py
+    foyers.forEach((foyer, i) => {
+      out[i] = travelTo(solution, foyer.point).minutes;
+    });
+  } else {
+    const solution = app.roads.solve(mode, vente.point, { maxMinutes: TOOL_MAX_MINUTES + 5 });
+    foyers.forEach((foyer, i) => {
+      out[i] = app.roads.minutesTo(solution, foyer.point) ?? NaN;
+    });
+  }
+  return out.map((minutes) => (minutes <= TOOL_MAX_MINUTES ? minutes : NaN));
+}
+
+const toolModes = (vente) => (vente.parking ? ["tc", "velo", "voiture"] : ["tc", "velo"]);
+const nextFrame = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** Calcule ce qui manque (foyers × points de vente × modes), en reprenant la mémoire du navigateur. */
+async function runTool() {
+  const { foyers, ventes } = app.tool;
+  if (!foyers.length || !ventes.length || app.tool.busy) return;
+  app.tool.busy = true;
+  try {
+    await ensureRoads();
+    const jobs = ventes.flatMap((vente) => toolModes(vente).map((mode) => [vente, mode]));
+    let reused = 0;
+    let computed = 0;
+    for (const [n, [vente, mode]] of jobs.entries()) {
+      const key = `${TOOL_MODEL}|${mode}|${vente.key}`;
+      const saved = (await toolDb.get(key).catch(() => null)) ?? {};
+      const missing = foyers.filter((foyer) => !(foyer.key in saved));
+      if (missing.length) {
+        toast(`Calcul ${n + 1} / ${jobs.length} : ${vente.id}, ${MODE_LABELS[mode]}…`, 60000);
+        await nextFrame();
+        const minutes = computeTimes(vente, mode, missing);
+        missing.forEach((foyer, i) => {
+          saved[foyer.key] = Number.isNaN(minutes[i]) ? null : Math.round(minutes[i] * 10) / 10;
+        });
+        await toolDb.put(key, saved).catch((error) => console.warn("Mémoire du navigateur indisponible", error));
+        computed += missing.length;
+      }
+      reused += foyers.length - missing.length;
+      app.tool.times.set(
+        `${vente.id}|${mode}`,
+        Float32Array.from(foyers, (foyer) => saved[foyer.key] ?? NaN),
+      );
+    }
+    toast(
+      computed
+        ? `Calculs terminés : ${computed} temps calculés, ${reused} repris de la mémoire du navigateur.`
+        : `Tous les temps (${reused}) étaient déjà en mémoire.`,
+      5000,
+    );
+  } catch (error) {
+    console.error(error);
+    toast(`Calcul impossible : ${error.message}`, 8000);
+  } finally {
+    app.tool.busy = false;
+    fillVenteSelect();
+    updatePanel();
+    requestRender();
+  }
+}
+
+async function importPlaces(file, kind) {
+  try {
+    toast(`Lecture de ${file.name}…`, 30000);
+    const { places, report } = await readPlaces(file, kind);
+    app.tool[kind] = places;
+    const label = kind === "foyers" ? "foyers" : "points de vente";
+    app.tool.report = [...app.tool.report.filter((row) => row.fichier !== (kind === "foyers" ? "foyer" : "point de vente")), ...report];
+    app.tool.times.clear();
+    app.tool.active = null;
+    const missing = report.length - places.length;
+    const placed = `${places.length} ${label} placés${missing ? `, ${missing} non trouvés (voir « Contrôle des adresses »)` : ""}.`;
+    fillVenteSelect();
+    if (app.tool.foyers.length && app.tool.ventes.length) {
+      toast(placed, 4000);
+      await runTool();
+    } else {
+      toast(`${placed} Importez aussi les ${kind === "foyers" ? "points de vente" : "foyers"}.`, 8000);
+    }
+  } catch (error) {
+    console.error(error);
+    toast(`Lecture impossible : ${error.message}`, 8000);
+  }
+}
+
+function fillVenteSelect() {
+  const select = $("venteSelect");
+  const ready = app.tool.ventes.length && app.tool.foyers.length && app.tool.times.size;
+  select.replaceChildren(
+    new Option("Choisir un point de vente…", ""),
+    ...app.tool.ventes.map((vente) => new Option(vente.parking ? `${vente.id} · parking` : vente.id, vente.id)),
+  );
+  select.value = app.tool.active ?? "";
+  select.hidden = !ready;
+  $("exportRecap").hidden = !ready;
+  $("exportCheck").hidden = !app.tool.report.length;
+}
+
+function activateVente(id) {
+  const vente = app.tool.ventes.find((item) => item.id === id);
+  if (!vente) return;
+  if (app.r5.active) leaveR5();
+  app.tool.active = id;
+  app.from = { point: vente.point, label: vente.label !== vente.id ? `${vente.id} · ${vente.label}` : vente.id };
+  app.to = null;
+  app.heatFrom = "from";
+  $("venteSelect").value = id;
+  recompute();
+}
+
+function leaveTool() {
+  app.tool.active = null;
+  $("venteSelect").value = "";
+}
+
+function toolTimes() {
+  return app.tool.active ? app.tool.times.get(`${app.tool.active}|${app.mode}`) ?? null : null;
+}
+
+/** Tableau des foyers et personnes sous chaque seuil, dans le panneau. */
+function toolCountsList(times, thresholds) {
+  const { foyers } = app.tool;
+  const total = foyers.reduce((sum, foyer) => sum + foyer.personnes, 0);
+  const list = document.createElement("ul");
+  list.className = "r5-counts";
+  const format = (x) => x.toLocaleString("fr-FR", { maximumFractionDigits: 1 });
+  for (const threshold of thresholds) {
+    let count = 0;
+    let people = 0;
+    foyers.forEach((foyer, i) => {
+      if (times[i] <= threshold) {
+        count += 1;
+        people += foyer.personnes;
+      }
+    });
+    const item = document.createElement("li");
+    const label = document.createElement("span");
+    label.textContent = `≤ ${threshold} min`;
+    const value = document.createElement("strong");
+    value.textContent = `${count} / ${foyers.length} foyers · ${format(people)} / ${format(total)} personnes`;
+    item.append(label, value);
+    list.append(item);
+  }
+  return list;
+}
+
+function updateToolPanel() {
+  const info = $("r5Info");
+  info.hidden = false;
+  const parts = [];
+  const line = (text, className) => {
+    const p = document.createElement("p");
+    p.textContent = text;
+    if (className) p.className = className;
+    parts.push(p);
+  };
+  const vente = app.tool.ventes.find((item) => item.id === app.tool.active);
+  const times = toolTimes();
+  line(`${R5_MODES[app.mode]} · calcul dans la page`, "trip-eyebrow");
+  if (!times) {
+    line(
+      app.mode === "voiture" && !vente?.parking
+        ? "Pas de calcul en voiture pour ce point de vente : il n'a pas de parking (colonne parking)."
+        : "Calcul en cours…",
+      "r5-source",
+    );
+  } else {
+    const thresholds = app.isochrones.length ? [...app.isochrones].sort((a, b) => a - b) : [app.maxMinutes];
+    line("Foyers dans l'isochrone", "trip-eyebrow");
+    parts.push(toolCountsList(times, thresholds));
+    line(
+      app.mode === "tc"
+        ? "Transports en commun : calcul simplifié provisoire (marche à vol d'oiseau jusqu'aux arrêts)."
+        : `${ROAD_MODES[app.mode].label} : ${ROAD_MODES[app.mode].describe}.`,
+      "r5-source",
+    );
+  }
+  info.replaceChildren(...parts);
+}
+
+function drawFoyers() {
+  const times = toolTimes();
+  if (!times) return;
+  const labels = app.view.scale > STOP_LABEL_SCALE;
+  app.tool.foyers.forEach((foyer, i) => {
+    const [x, y] = project(foyer.point);
+    if (x < -20 || y < -20 || x > app.size.width + 20 || y > app.size.height + 20) return;
+    const time = times[i];
+    const inside = time <= app.maxMinutes;
+    const [r, g, b] = inside ? paletteColor(time / app.maxMinutes) : [150, 150, 150];
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+    ctx.fill();
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = "#111";
+    ctx.stroke();
+    if (labels) {
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      drawHaloText(Number.isNaN(time) ? foyer.id : `${foyer.id} · ${formatMinutes(time)}`, x + 8, y, {
+        font: "600 11px Inter, sans-serif",
+        color: "#111",
+      });
+    }
+  });
+}
+
+/** Télécharge un CSV (séparateur « ; », UTF-8 avec BOM, virgule décimale : s'ouvre tel quel dans Excel). */
+function downloadCsv(name, header, rows) {
+  const cell = (value) => {
+    const text = value === null || value === undefined || Number.isNaN(value) ? "" : typeof value === "number" ? String(value).replace(".", ",") : String(value);
+    return /[;"\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+  };
+  const text = "﻿" + [header, ...rows].map((row) => row.map(cell).join(";")).join("\r\n") + "\r\n";
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+function exportRecap() {
+  const { foyers, ventes } = app.tool;
+  const rows = [];
+  for (const vente of ventes) {
+    for (const mode of ["tc", "velo", "voiture"]) {
+      const times = app.tool.times.get(`${vente.id}|${mode}`);
+      for (const threshold of RECAP_THRESHOLDS) {
+        if (!times) {
+          rows.push([vente.id, vente.label, MODE_LABELS[mode], threshold, null, null,
+            mode === "voiture" ? "pas de parking : voiture non calculée" : "non calculé"]);
+          continue;
+        }
+        let count = 0;
+        let people = 0;
+        foyers.forEach((foyer, i) => {
+          if (times[i] <= threshold) {
+            count += 1;
+            people += foyer.personnes;
+          }
+        });
+        rows.push([vente.id, vente.label, MODE_LABELS[mode], threshold, count, Math.round(people * 100) / 100, ""]);
+      }
     }
   }
+  downloadCsv("recapitulatif.csv", ["point de vente", "adresse", "mode", "isochrone (min)", "foyers", "personnes", "remarque"], rows);
+}
+
+function exportCheck() {
+  downloadCsv(
+    "controle_adresses.csv",
+    ["fichier", "id", "adresse", "qualité", "voie trouvée"],
+    app.tool.report.map((row) => [row.fichier, row.id, row.adresse, row.qualite, row.trouve]),
+  );
+}
+
+async function saveMemory() {
+  const entries = await toolDb.entries();
+  const blob = new Blob([JSON.stringify({ format: "porte-a-porte-memoire-1", entries })], { type: "application/json" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `calculs_porte_a_porte_${new Date().toISOString().slice(0, 10)}.json`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  toast(`${entries.length} calculs sauvegardés.`);
+}
+
+async function restoreMemory(file) {
   try {
-    await navigator.clipboard.writeText(url);
-    toast("Lien copié !");
-  } catch {
-    toast(url);
+    const saved = JSON.parse(await file.text());
+    if (saved.format !== "porte-a-porte-memoire-1") throw new Error("fichier non reconnu");
+    for (const [key, value] of saved.entries) {
+      const current = (await toolDb.get(key)) ?? {};
+      await toolDb.put(key, { ...value, ...current });
+    }
+    toast(`${saved.entries.length} calculs restaurés.`);
+    app.tool.times.clear();
+    await runTool();
+  } catch (error) {
+    toast(`Restauration impossible : ${error.message}`, 7000);
+  }
+}
+
+$("foyersFile").addEventListener("change", (event) => {
+  const [file] = event.target.files;
+  event.target.value = "";
+  if (file) importPlaces(file, "foyers");
+});
+$("ventesFile").addEventListener("change", (event) => {
+  const [file] = event.target.files;
+  event.target.value = "";
+  if (file) importPlaces(file, "ventes");
+});
+$("venteSelect").addEventListener("change", (event) => {
+  if (event.target.value) activateVente(event.target.value);
+  else {
+    leaveTool();
+    recompute();
   }
 });
+$("exportRecap").addEventListener("click", exportRecap);
+$("exportCheck").addEventListener("click", exportCheck);
+$("saveMemory").addEventListener("click", () => saveMemory().catch((error) => toast(`Sauvegarde impossible : ${error.message}`, 7000)));
+$("restoreMemory").addEventListener("change", (event) => {
+  const [file] = event.target.files;
+  event.target.value = "";
+  if (file) restoreMemory(file);
+});
 
-// --- Recherche d'adresse (Base Adresse Nationale) ----------------------------
+// --- Recherche d'adresse (index local de la Base Adresse Nationale) ------------
 
 const searchInput = $("searchInput");
 const searchResults = $("searchResults");
 let searchTimer = null;
-let searchController = null;
 
 function normalize(text) {
   return text
@@ -1924,23 +2313,10 @@ function searchStops(query) {
 }
 
 async function searchAddress(query) {
+  // Recherche locale (index de la Base Adresse Nationale fourni avec le site) : rien n'est envoyé en ligne.
   const stops = searchStops(query);
-  searchController?.abort();
-  searchController = new AbortController();
-  const params = new URLSearchParams({ q: query, limit: "6", lat: "43.61", lon: "3.877" });
-  let payload = { features: [] };
-  try {
-    const response = await fetch(`${GEOCODER_URL}?${params}`, { signal: searchController.signal });
-    payload = await response.json();
-  } catch (error) {
-    if (error.name === "AbortError" || !stops.length) throw error;
-  }
-  const addresses = payload.features
-    .map((feature) => {
-      const [lon, lat] = feature.geometry.coordinates;
-      return { label: feature.properties.label, context: feature.properties.context, point: toWorld(lat, lon) };
-    })
-    .filter((result) => isOnLand(result.point));
+  const index = await ensureAddresses().catch(() => null);
+  const addresses = index ? index.search(query, 6).filter((result) => isOnLand(result.point)) : [];
   return [...stops, ...addresses].slice(0, 7);
 }
 

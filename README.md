@@ -15,6 +15,27 @@ Fonctionnalités : heatmap et isochrones depuis un départ déplaçable, arrivé
 tram + bus, déplacement et zoom de la carte, lien de partage, fond de carte OpenStreetMap (désactivable, avec
 opacité des couleurs réglable).
 
+## Utiliser l'outil avec ses propres données (sans rien installer)
+
+Ouvrir la page (en local : voir « Lancer » ; en ligne : l'adresse GitHub Pages du dépôt), puis dans « Vos données » :
+
+1. « Foyers… » : un CSV des foyers (identifiant `name` ou `id`, adresse `result_label`, `Adresses` ou `adresse`, ou
+   `Latitude` et `Longitude`, et `nb_personne`, 1 par défaut) ;
+2. « Points de vente… » : un CSV des points de vente (mêmes colonnes, plus `type` et `parking` oui/non) ;
+3. la page place les adresses (index local de la Base Adresse Nationale), calcule les temps de chaque point de vente
+   vers chaque foyer (marche + transports en commun, vélo, et voiture s'il y a un parking), puis propose la liste des
+   points de vente : la carte montre ses isochrones et les foyers, le panneau les foyers et personnes dans chaque
+   isochrone ;
+4. « Récapitulatif (CSV) » : le tableau foyers et personnes par point de vente, mode et isochrone (5, 10, 15, 30, 45,
+   60 min) ; « Contrôle des adresses » : comment chaque adresse a été placée (et celles non trouvées).
+
+Rien ne quitte le navigateur : les fichiers sont lus sur place, et une règle de sécurité de la page
+(Content-Security-Policy) lui interdit de contacter un autre site que celui des tuiles du fond de carte (qui ne voit
+que les zones affichées ; `?fond=0` s'en passe). Les temps calculés sont gardés dans le navigateur (IndexedDB), par
+position : réimporter des fichiers mis à jour ne calcule que les nouveaux lieux. « Sauvegarder les calculs » et
+« Restaurer… » les transportent d'un navigateur à l'autre. Pour l'instant, les transports en commun y sont calculés
+comme sur la carte (marche à vol d'oiseau jusqu'aux arrêts) ; un calcul porte à porte proche de r5py est prévu.
+
 ## Lancer
 
 ```bash
@@ -38,7 +59,8 @@ Puis ouvrir [http://localhost:8000](http://localhost:8000).
 - Fond de carte : © contributeurs OpenStreetMap, tuiles du serveur officiel (`tile.openstreetmap.org`, sans clé),
   reprojetées dans le repère local du site (voir `site/basemap.js`). Paramètres d'URL : `mode=velo` ou `mode=voiture`, `fond=0` (sans fond), `lignes=0` (sans lignes ni arrêts, case « Lignes et arrêts »),
   `fond=carto` (CARTO Voyager, nécessite une clé d'API), `opacite=20..100`
-- Recherche d'adresse côté navigateur : [api-adresse.data.gouv.fr](https://adresse.data.gouv.fr/)
+- Recherche et géocodage d'adresse dans le navigateur, sans service en ligne : index de la [Base Adresse Nationale](https://adresse.data.gouv.fr/)
+  (Licence Ouverte) pour les 31 communes, `site/data/adresses.bin` (0,8 Mo), refait par `python tools/adresses_site.py data/adresses-34.csv.gz`
 - Aucun service tiers : ni mesure d'audience, ni police chargée ailleurs (Inter est hébergée dans `site/fonts/`,
   SIL Open Font License). Seules les tuiles du fond de carte viennent de `tile.openstreetmap.org`.
 
