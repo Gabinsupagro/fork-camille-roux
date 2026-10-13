@@ -102,8 +102,9 @@ majuscules :
 - identifiant : `name`, `id`, `nom` ;
 - adresse (« 12 rue de la Loge 34000 Montpellier ») : `Adresses`, `adresse`, `result_label`, `address`, `label` ;
 - ou coordonnées, prioritaires quand elles sont remplies : `Latitude`/`lat` et `Longitude`/`lon` ;
-- `points.csv` seulement, facultatif : `nb_foyer` (nombre de foyers à l'adresse, 1 par défaut) ; `comptes.csv` donne
-  alors aussi le nombre de foyers sous chaque seuil, et la carte l'affiche à côté du nombre de points ;
+- `points.csv` seulement, facultatif : `nb_personne` (chaque point est un foyer ; nombre de personnes qui le composent,
+  1 par défaut) ; `comptes.csv` donne alors aussi le nombre de personnes sous chaque seuil, et la carte l'affiche à côté
+  du nombre de points ;
 - `references.csv` seulement : `type` et `parking` (voir plus bas).
 
 ```bash

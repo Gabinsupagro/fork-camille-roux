@@ -1561,8 +1561,8 @@ async function loadR5Files(files) {
           id: row.id,
           label: row.adresse || row.id,
           point: toWorld(Number(row.lat), Number(row.lon)),
-          // Colonne foyers (nb_foyer de points.csv) : absente des anciens fichiers.
-          foyers: row.foyers === undefined || row.foyers === "" ? null : Number(row.foyers.replace(",", ".")),
+          // Colonne personnes (nb_personne de points.csv : personnes du foyer) ; absente des anciens fichiers.
+          personnes: row.personnes === undefined || row.personnes === "" ? null : Number(row.personnes.replace(",", ".")),
         }));
       notes.push(`${app.r5.points.length} points`);
     } else if (columns.has("reference") && columns.has("point") && columns.has("minutes")) {
@@ -1677,10 +1677,10 @@ function updateR5Panel() {
       label.textContent = `≤ ${threshold} min`;
       const value = document.createElement("strong");
       value.textContent = `${count} / ${points.length} points`;
-      if (points.some((point) => point.foyers !== null)) {
-        const sum = (list) => list.reduce((total, point) => total + (point.foyers ?? 0), 0);
+      if (points.some((point) => point.personnes !== null)) {
+        const sum = (list) => list.reduce((total, point) => total + (point.personnes ?? 0), 0);
         const format = (x) => x.toLocaleString("fr-FR", { maximumFractionDigits: 1 });
-        value.textContent += ` · ${format(sum(inside))} / ${format(sum(points))} foyers`;
+        value.textContent += ` · ${format(sum(inside))} / ${format(sum(points))} personnes`;
       }
       item.append(label, value);
       list.append(item);
