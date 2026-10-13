@@ -765,3 +765,25 @@ output {
 .pill-remove:hover {
   color: var(--ink);
 }
+
+/* Encart « Confidentialité de vos données ». */
+.privacy {
+  margin: 0 0 28px;
+  padding: 16px 20px;
+  border: 1px solid var(--green);
+  border-radius: var(--radius);
+  background: var(--green-soft);
+  color: var(--ink);
+}
+
+.privacy h2 {
+  margin-top: 0;
+}
+
+.privacy ul {
+  margin: 0;
+}
+
+.privacy li {
+  margin-bottom: 6px;
+}

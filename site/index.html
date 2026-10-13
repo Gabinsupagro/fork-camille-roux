@@ -19,7 +19,7 @@
     <link rel="icon" href="./favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
 
-    <link rel="stylesheet" href="./styles.css?v=14" />
+    <link rel="stylesheet" href="./styles.css?v=15" />
   </head>
   <body>
 
@@ -151,6 +151,29 @@
       </section>
 
       <section class="notes">
+        <aside class="privacy" aria-labelledby="privacyTitle">
+          <h2 id="privacyTitle">Confidentialité de vos données</h2>
+          <ul>
+            <li>
+              <strong>Vos fichiers ne quittent pas votre ordinateur.</strong> Ils sont lus, géocodés et calculés dans ce
+              navigateur&nbsp;; rien n'est envoyé, ni à GitHub qui héberge le site, ni ailleurs.
+            </li>
+            <li>
+              <strong>La page ne peut contacter que deux sites</strong>&nbsp;: le sien, pour charger ses données publiques
+              (horaires, rues, adresses), et le serveur des images du fond de carte, qui ne voit que les zones affichées
+              (ajouter <code>?fond=0</code> à l'adresse pour s'en passer).
+            </li>
+            <li>
+              <strong>Ce qui reste sur votre ordinateur</strong>&nbsp;: les calculs gardés par ce navigateur, et les fichiers
+              exportés (récapitulatif, sauvegarde des calculs), à ranger comme les données d'origine.
+            </li>
+            <li>
+              <strong>Ce qui le garantit</strong>&nbsp;: le code de la page, public et vérifiable. Touche F12, onglet
+              «&nbsp;Réseau&nbsp;»&nbsp;: aucun envoi lors d'un import. Pour ne dépendre d'aucun hébergeur, le site peut
+              aussi tourner sur votre propre ordinateur.
+            </li>
+          </ul>
+        </aside>
         <h2>Vos données</h2>
         <p>
           «&nbsp;Foyers…&nbsp;» et «&nbsp;Points de vente…&nbsp;» importent deux fichiers CSV (séparateur «&nbsp;;&nbsp;» ou
@@ -161,9 +184,8 @@
           parking).
         </p>
         <p>
-          Tout se passe dans votre navigateur&nbsp;: les fichiers ne sont envoyés nulle part, les adresses sont placées sur la
-          carte avec un index de la Base Adresse Nationale fourni avec le site, et la page n'a le droit de contacter aucun
-          autre site que celui des tuiles du fond de carte. Les temps calculés restent en mémoire dans ce navigateur&nbsp;:
+          Les adresses sont placées sur la carte avec un index de la Base Adresse Nationale fourni avec le site. Les temps
+          calculés restent en mémoire dans ce navigateur&nbsp;:
           en important plus tard des fichiers mis à jour, seuls les nouveaux foyers et points de vente sont calculés.
           «&nbsp;Sauvegarder les calculs&nbsp;» les met dans un fichier, à «&nbsp;Restaurer…&nbsp;» sur un autre ordinateur.
           «&nbsp;Récapitulatif (CSV)&nbsp;» donne, pour chaque point de vente, chaque mode et chaque isochrone, le nombre de
