@@ -117,6 +117,9 @@ Résultats dans `sortie/` (non versionné) :
 - `geocodage.csv` : où chaque adresse a été placée, avec la qualité du rapprochement (à vérifier) ;
 - `matrice.csv` : temps de chaque référence vers chaque point, en minutes (vide si inaccessible en 90 min) ;
 - `comptes.csv` : nombre de points sous chaque seuil, par référence ;
+- `recapitulatif.csv` : pour chaque référence, chaque mode (marche + transports en commun, vélo, voiture) et chaque
+  isochrone de la carte (5, 10, 15, 30, 45 et 60 min), le nombre de foyers et de personnes dedans ; une ligne vide
+  avec une remarque quand un mode n'est pas calculé (voiture sans parking) ;
 - `isochrones.geojson` : isochrones par référence et par seuil (QGIS) ;
 - `grilles/<id>.json` : temps par case de 50 m, dans le repère de la carte du site, pour l'afficher ; compressés sans
   perte (un octet par case, zlib, base64 : environ 50 Ko au lieu de 1,3 Mo), la carte lit aussi l'ancien format.

@@ -17,10 +17,11 @@ Usage :
   python r5_isochrones.py --osm data/languedoc-roussillon-latest.osm.pbf \\
       --references prive/references.csv --points prive/points.csv --ban data/adresses-34.csv.gz
 
-Fichiers d'entrée (CSV, séparateur « ; » ou « , ») : une colonne « id » (facultative), et soit une colonne
-« adresse » (texte libre : « 12 rue de la Loge 34000 Montpellier »), soit deux colonnes « lat » et « lon ».
+Fichiers d'entrée (CSV, séparateur « ; » ou « , ») : un identifiant (name ou id, facultatif), et soit une
+adresse (Adresses, result_label ou adresse : « 12 rue de la Loge 34000 Montpellier »), soit des coordonnées
+(Latitude/lat et Longitude/lon) ; voir COLUMNS. points.csv peut avoir nb_personne (personnes du foyer).
 Sorties dans --sortie (par défaut sortie/, non versionné) :
-  geocodage.csv, matrice.csv, comptes.csv, isochrones.geojson, grilles/<id>.json
+  geocodage.csv, matrice.csv, comptes.csv, recapitulatif.csv, isochrones.geojson, grilles/<id>.json
 """
 
 from __future__ import annotations
@@ -43,6 +44,8 @@ import build_data
 
 ROOT = Path(__file__).resolve().parent
 THRESHOLDS = [5, 10, 15, 20, 30, 45, 60]
+RECAP_THRESHOLDS = [5, 10, 15, 30, 45, 60]  # les isochrones proposées sur la carte
+MODE_LABELS = {"tc": "marche + transports en commun", "velo": "vélo", "voiture": "voiture"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -536,6 +539,7 @@ def main() -> None:
     # --- Matrice références × points : seules les paires inconnues sont calculées ---
     if points:
         matrix_rows, count_rows = [], []
+        times_by = {}  # (id de référence, mode) → minutes vers chaque point, pour le récapitulatif
         for mode, refs in refs_by_mode.items():
             if not refs:
                 continue
@@ -578,11 +582,38 @@ def main() -> None:
                     counts_row.update({f"personnes <= {t} min": tidy(people[values <= t].sum()) for t in THRESHOLDS})
                     counts_row["personnes inaccessibles"] = tidy(people[values.isna()].sum())
                 count_rows.append(counts_row)
+                times_by[(ref["id"], mode)] = values
         matrix = pd.DataFrame(matrix_rows)
         matrix["minutes"] = matrix["minutes"].astype(float)
         matrix.to_csv(args.sortie / "matrice.csv", index=False, sep=";", encoding="utf-8-sig")
         counts = pd.DataFrame(count_rows)
         counts.to_csv(args.sortie / "comptes.csv", index=False, sep=";", encoding="utf-8-sig")
+
+        # Récapitulatif : chaque référence × chaque mode × chaque isochrone de la carte, foyers et personnes dedans.
+        # Chaque point est un foyer ; nb_personne (1 par défaut) donne ses personnes.
+        people = pd.Series([point["personnes"] for point in points], dtype=float)
+        tidy = lambda x: int(x) if float(x).is_integer() else round(float(x), 2)
+        recap = []
+        for ref in references:
+            for mode in ("tc", "velo", "voiture"):
+                values = times_by.get((ref["id"], mode))
+                for threshold in RECAP_THRESHOLDS:
+                    row = {"reference": ref["id"], "adresse": ref["label"], "mode": MODE_LABELS[mode],
+                           "isochrone (min)": threshold}
+                    if values is None:
+                        row.update({"foyers": None, "personnes": None,
+                                    "remarque": "pas de parking : voiture non calculée" if mode == "voiture" else "non calculé"})
+                    else:
+                        inside = values <= threshold
+                        row.update({"foyers": int(inside.sum()), "personnes": tidy(people[inside].sum()), "remarque": ""})
+                    recap.append(row)
+        recap = pd.DataFrame(recap)
+        recap["foyers"] = recap["foyers"].astype("Int64")
+        known_people = recap["personnes"].dropna().astype(float)
+        recap["personnes"] = recap["personnes"].astype("Int64" if (known_people % 1 == 0).all() else float)
+        # Virgule décimale, pour Excel en français, si des foyers ont un nombre de personnes non entier.
+        recap.to_csv(args.sortie / "recapitulatif.csv", index=False, sep=";", decimal=",", encoding="utf-8-sig")
+        print(f"Récapitulatif ({len(points)} foyers, {tidy(people.sum())} personnes) : recapitulatif.csv")
         print(counts[[c for c in counts.columns if c != "adresse" and not c.startswith("personnes")]].to_string(index=False))
         if has_people:
             print("Personnes :")
