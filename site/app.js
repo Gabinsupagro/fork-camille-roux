@@ -1564,7 +1564,7 @@ async function loadR5Files(files) {
           // Colonne personnes (nb_personne de points.csv : personnes du foyer) ; absente des anciens fichiers.
           personnes: row.personnes === undefined || row.personnes === "" ? null : Number(row.personnes.replace(",", ".")),
         }));
-      notes.push(`${app.r5.points.length} points`);
+      notes.push(`${app.r5.points.length} foyers`);
     } else if (columns.has("reference") && columns.has("point") && columns.has("minutes")) {
       app.r5.matrix = new Map(
         // Colonne « mode » absente (matrice d'avant le mode voiture) : marche + transports en commun.
@@ -1676,7 +1676,7 @@ function updateR5Panel() {
       const label = document.createElement("span");
       label.textContent = `≤ ${threshold} min`;
       const value = document.createElement("strong");
-      value.textContent = `${count} / ${points.length} points`;
+      value.textContent = `${count} / ${points.length} foyers`;
       if (points.some((point) => point.personnes !== null)) {
         const sum = (list) => list.reduce((total, point) => total + (point.personnes ?? 0), 0);
         const format = (x) => x.toLocaleString("fr-FR", { maximumFractionDigits: 1 });
@@ -1685,12 +1685,12 @@ function updateR5Panel() {
       item.append(label, value);
       list.append(item);
     }
-    line("Points dans l'isochrone", "trip-eyebrow");
+    line("Foyers dans l'isochrone", "trip-eyebrow");
     parts.push(list);
     const exact = points.every((point) => app.r5.matrix.has(`${app.r5.active}|${app.mode}|${point.id}`));
     line(exact ? "D'après matrice.csv (temps exacts aux adresses)." : "D'après la grille (chargez matrice.csv pour les temps exacts).", "r5-source");
   } else {
-    line("Chargez geocodage.csv pour afficher et compter les points.", "r5-source");
+    line("Chargez geocodage.csv pour afficher et compter les foyers.", "r5-source");
   }
   $("r5Info").replaceChildren(...parts);
   $("reach").textContent = "";
