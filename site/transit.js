@@ -80,17 +80,29 @@ export async function loadTransit(url, walk) {
     });
     const egressLimit = EGRESS_METERS / walk.speed;
     const offsets = new Int32Array(nStops + 1);
-    const lists = [];
-    for (let s = 0; s < nStops; s += 1) {
-      const list = [];
-      if (stopNode[s] >= 0) {
+    const lists = Array.from({ length: nStops }, () => []);
+    if (points.length <= 50) {
+      // Peu de destinations (un clic sur la carte) : marche depuis chacune vers les arrêts proches, plus rapide
+      // que depuis chaque arrêt (le réseau piéton est symétrique, les temps sont les mêmes).
+      points.forEach((_, target) => {
+        if (node[target] < 0) return;
+        walk.from(node[target], link[target], egressLimit + link[target], (n, seconds) => {
+          for (const s of stopsAtNode.get(n) ?? []) {
+            if (seconds + stopLink[s] <= egressLimit + link[target]) lists[s].push(target, seconds + stopLink[s]);
+          }
+        });
+      });
+    } else {
+      for (let s = 0; s < nStops; s += 1) {
+        if (stopNode[s] < 0) continue;
         walk.from(stopNode[s], stopLink[s], egressLimit, (n, seconds) => {
-          for (const target of targetsAtNode.get(n) ?? []) list.push(target, seconds + link[target]);
+          for (const target of targetsAtNode.get(n) ?? []) lists[s].push(target, seconds + link[target]);
         });
       }
-      lists.push(list);
-      offsets[s + 1] = offsets[s] + list.length / 2;
     }
+    lists.forEach((list, s) => {
+      offsets[s + 1] = offsets[s] + list.length / 2;
+    });
     const egressTarget = new Int32Array(offsets[nStops]);
     const egressSeconds = new Float32Array(offsets[nStops]);
     lists.forEach((list, s) => {

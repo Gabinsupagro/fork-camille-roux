@@ -4,7 +4,7 @@
 import { createBasemap, DEFAULT_PROVIDER, PROVIDERS } from "./basemap.js?v=2";
 import { loadRoads, ROAD_MODES } from "./roads.js?v=1";
 import { loadAddresses } from "./adresses.js?v=1";
-import { loadTransit } from "./transit.js?v=1";
+import { loadTransit } from "./transit.js?v=2";
 
 const DATA_URL = new URL("./data/commute_map_data.json?v=7", import.meta.url);
 const ROADS_URL = new URL("./data/routes.bin?v=1", import.meta.url);
@@ -986,6 +986,9 @@ function render() {
     if (app.roadSolution) {
       const road = roadMinutesTo(app.to.point);
       minutes = road === null ? "—" : formatMinutes(road);
+    } else if (toolTransitShown()) {
+      const transit = toolArrivalMinutes();
+      minutes = transit === null ? "—" : formatMinutes(transit);
     }
     if (app.r5.active) {
       const r5 = r5TimeAt(app.to.point);
@@ -1154,7 +1157,22 @@ function updatePanel() {
     return;
   }
   const result = $("tripResult");
-  if (!app.to || !app.solution) {
+  if (app.to && toolTransitShown()) {
+    // Même calcul que les comptes et les isochrones : porte à porte, médiane des départs de 7 h à 20 h.
+    const minutes = toolArrivalMinutes();
+    result.hidden = false;
+    $("tripHint").hidden = true;
+    $("tripTo").textContent = app.to.label;
+    $("tripDuration").textContent = minutes === null ? "Inaccessible" : formatMinutes(minutes);
+    const item = document.createElement("li");
+    const badge = document.createElement("span");
+    badge.className = "badge walk";
+    badge.textContent = "🚶";
+    const text = document.createElement("span");
+    text.textContent = "Marche par les rues et transports en commun : temps médian pour des départs de 7 h à 20 h.";
+    item.append(badge, text);
+    $("tripSteps").replaceChildren(item);
+  } else if (!app.to || !app.solution) {
     result.hidden = true;
     $("tripHint").hidden = false;
   } else {
@@ -2133,6 +2151,34 @@ function leaveTool() {
 
 function toolTimes() {
   return app.tool.active ? app.tool.times.get(`${app.tool.active}|${app.mode}`) ?? null : null;
+}
+
+/** Point de vente choisi en transports en commun, carte partant de lui : la carte vient du calcul porte à porte. */
+function toolTransitShown() {
+  return Boolean(app.tool.active && app.mode === "tc" && heatSource() === app.from && app.tool.grids.get(`${app.tool.active}|tc`));
+}
+
+/**
+ * Minutes porte à porte du point de vente choisi vers l'arrivée posée, avec le calcul de ses comptes. Pendant
+ * qu'on fait glisser l'arrivée : la valeur de la case de la carte ; au lâcher, le calcul exact (gardé).
+ */
+function toolArrivalMinutes() {
+  if (!app.to) return null;
+  if (app.drag?.kind === "marker") {
+    const { cols, times } = app.grid;
+    const [minX, minY, maxX, maxY] = app.data.meta.bounds;
+    const col = Math.floor(((app.to.point[0] - minX) / (maxX - minX)) * cols);
+    const row = Math.floor(((app.to.point[1] - minY) / (maxY - minY)) * app.grid.rows);
+    const value = col >= 0 && row >= 0 && col < cols && row < app.grid.rows ? times[row * cols + col] : NaN;
+    return Number.isFinite(value) ? value : null;
+  }
+  const vente = app.tool.ventes.find((item) => item.id === app.tool.active);
+  const key = `${vente.key}|${placeKey(app.to.point)}`;
+  if (!app.tool.arrival || app.tool.arrival.key !== key) {
+    const [minutes] = app.transit.solve(vente.point, app.transit.prepareTargets([app.to.point]));
+    app.tool.arrival = { key, minutes: Number.isFinite(minutes) ? minutes : null };
+  }
+  return app.tool.arrival.minutes;
 }
 
 /** Tableau des foyers et personnes sous chaque seuil, dans le panneau. */
