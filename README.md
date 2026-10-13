@@ -33,8 +33,16 @@ Rien ne quitte le navigateur : les fichiers sont lus sur place, et une règle de
 (Content-Security-Policy) lui interdit de contacter un autre site que celui des tuiles du fond de carte (qui ne voit
 que les zones affichées ; `?fond=0` s'en passe). Les temps calculés sont gardés dans le navigateur (IndexedDB), par
 position : réimporter des fichiers mis à jour ne calcule que les nouveaux lieux. « Sauvegarder les calculs » et
-« Restaurer… » les transportent d'un navigateur à l'autre. Pour l'instant, les transports en commun y sont calculés
-comme sur la carte (marche à vol d'oiseau jusqu'aux arrêts) ; un calcul porte à porte proche de r5py est prévu.
+« Restaurer… » les transportent d'un navigateur à l'autre (le fichier contient la position des foyers : il est aussi
+confidentiel que les données).
+
+Calculs de la page : vélo et voiture avec `site/roads.js` (voir plus bas) ; marche + transports en commun avec
+`site/transit.js`, qui reprend la méthode de r5py (R5) : marche par les rues à 4,5 km/h jusqu'aux arrêts, correspondances
+à pied jusqu'à 1 000 m, marche depuis le dernier arrêt jusqu'à 2 000 m, horaires TaM du jour de référence
+(`site/data/horaires.bin`, 0,25 Mo, refait par `python tools/horaires_site.py`), au moins 60 s d'attente à chaque
+montée, 8 véhicules au plus, départs chaque minute de 7 h à 20 h et médiane, minutes entières. Comparé à r5py sur
+2 500 trajets tirés au hasard : écart moyen de 1,4 min en valeur absolue, 90 % des écarts sous 3 min, à peine plus
+lent (+0,4 min en moyenne). Environ 1 s par point de vente pour 10 000 destinations.
 
 ## Lancer
 

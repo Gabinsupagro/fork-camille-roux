@@ -4,6 +4,7 @@
 import { createBasemap, DEFAULT_PROVIDER, PROVIDERS } from "./basemap.js?v=2";
 import { loadRoads, ROAD_MODES } from "./roads.js?v=1";
 import { loadAddresses } from "./adresses.js?v=1";
+import { loadTransit } from "./transit.js?v=1";
 
 const DATA_URL = new URL("./data/commute_map_data.json?v=7", import.meta.url);
 const ROADS_URL = new URL("./data/routes.bin?v=1", import.meta.url);
@@ -11,7 +12,8 @@ const ROAD_LIMIT_MINUTES = 100; // le calcul voiture et vélo s'arrête au-delà
 const ADDRESSES_URL = new URL("./data/adresses.bin?v=1", import.meta.url);
 // Tout changement des données ou des méthodes de calcul de la page change cette version : les temps gardés en
 // mémoire dans le navigateur sont alors recalculés.
-const TOOL_MODEL = "page-1|data-7|routes-1";
+const HORAIRES_URL = new URL("./data/horaires.bin?v=1", import.meta.url);
+const TOOL_MODEL = "page-2|horaires-1|routes-1";
 const TOOL_MAX_MINUTES = 90; // au-delà, un foyer est jugé inaccessible (comme r5_isochrones.py)
 const RECAP_THRESHOLDS = [5, 10, 15, 30, 45, 60];
 const MODE_LABELS = { tc: "marche + transports en commun", velo: "vélo", voiture: "voiture" };
@@ -103,7 +105,9 @@ const app = {
   addressesLoading: null,
   // Données importées par l'utilisateur (lues dans le navigateur, jamais envoyées) et temps calculés :
   // times : clé « id du point de vente|mode » → minutes vers chaque foyer (NaN : inaccessible).
-  tool: { foyers: [], ventes: [], report: [], times: new Map(), active: null, busy: false },
+  // grids : clé « id du point de vente|tc » → minutes vers chaque case de la carte (isochrones transports en commun).
+  tool: { foyers: [], ventes: [], report: [], times: new Map(), grids: new Map(), active: null, busy: false, targets: null },
+  transit: null, // horaires et calcul transports en commun (transit.js), chargés au premier calcul
   drag: null,
   pointers: new Map(),
   frameRequested: false,
@@ -1059,6 +1063,19 @@ function recompute({ fast = false } = {}) {
     return;
   }
   if (!app.from) return;
+  const toolGrid =
+    app.tool.active && app.mode === "tc" && heatSource() === app.from ? app.tool.grids.get(`${app.tool.active}|tc`) : null;
+  if (toolGrid) {
+    // Point de vente choisi, transports en commun : isochrones du calcul porte à porte (celui des comptes).
+    app.solution = solveFrom(app.from.point);
+    app.heatSolution = app.solution;
+    app.roadSolution = null;
+    app.grid = roadGrid(toolGrid);
+    paintHeat(app.grid, { fast });
+    updatePanel();
+    requestRender();
+    return;
+  }
   if (app.mode !== "tc") {
     if (!app.roads) {
       ensureRoads().then(() => recompute(), () => {});
@@ -1972,10 +1989,13 @@ const toolDb = (() => {
 function computeTimes(vente, mode, foyers) {
   const out = new Float32Array(foyers.length).fill(NaN);
   if (mode === "tc") {
-    const solution = solveFrom(vente.point, true); // bus compris, comme r5_isochrones.py
+    // Toutes les destinations préparées d'un coup (foyers puis cases de la carte) : un seul calcul par point de vente.
+    const all = app.transit.solve(vente.point, app.tool.targets);
+    const index = new Map(app.tool.foyers.map((foyer, i) => [foyer.key, i]));
     foyers.forEach((foyer, i) => {
-      out[i] = travelTo(solution, foyer.point).minutes;
+      out[i] = all[index.get(foyer.key)];
     });
+    app.tool.grids.set(`${vente.id}|tc`, all.slice(app.tool.foyers.length));
   } else {
     const solution = app.roads.solve(mode, vente.point, { maxMinutes: TOOL_MAX_MINUTES + 5 });
     foyers.forEach((foyer, i) => {
@@ -1995,13 +2015,29 @@ async function runTool() {
   app.tool.busy = true;
   try {
     await ensureRoads();
+    if (!app.transit) {
+      toast("Chargement des horaires…", 30000);
+      await nextFrame();
+      app.transit = await loadTransit(HORAIRES_URL, app.roads.walk);
+    }
+    if (!app.tool.targets) {
+      toast("Préparation des trajets à pied vers les foyers…", 30000);
+      await nextFrame();
+      app.tool.targets = app.transit.prepareTargets([...foyers.map((foyer) => foyer.point), ...app.data.cells.map((cell) => cell.point)]);
+    }
     const jobs = ventes.flatMap((vente) => toolModes(vente).map((mode) => [vente, mode]));
     let reused = 0;
     let computed = 0;
     for (const [n, [vente, mode]] of jobs.entries()) {
       const key = `${TOOL_MODEL}|${mode}|${vente.key}`;
       const saved = (await toolDb.get(key).catch(() => null)) ?? {};
-      const missing = foyers.filter((foyer) => !(foyer.key in saved));
+      const gridKey = `${TOOL_MODEL}|grille|${vente.key}`;
+      if (mode === "tc" && !app.tool.grids.has(`${vente.id}|tc`)) {
+        const grid = await toolDb.get(gridKey).catch(() => null);
+        if (grid) app.tool.grids.set(`${vente.id}|tc`, Float32Array.from(grid, (value) => value ?? NaN));
+      }
+      // En transports en commun, la grille de la carte se calcule avec les foyers : refaite si elle manque.
+      const missing = mode === "tc" && !app.tool.grids.has(`${vente.id}|tc`) ? foyers : foyers.filter((foyer) => !(foyer.key in saved));
       if (missing.length) {
         toast(`Calcul ${n + 1} / ${jobs.length} : ${vente.id}, ${MODE_LABELS[mode]}…`, 60000);
         await nextFrame();
@@ -2010,6 +2046,10 @@ async function runTool() {
           saved[foyer.key] = Number.isNaN(minutes[i]) ? null : Math.round(minutes[i] * 10) / 10;
         });
         await toolDb.put(key, saved).catch((error) => console.warn("Mémoire du navigateur indisponible", error));
+        if (mode === "tc") {
+          const grid = Array.from(app.tool.grids.get(`${vente.id}|tc`), (value) => (Number.isNaN(value) ? null : value));
+          await toolDb.put(gridKey, grid).catch(() => {});
+        }
         computed += missing.length;
       }
       reused += foyers.length - missing.length;
@@ -2040,6 +2080,8 @@ async function importPlaces(file, kind) {
     toast(`Lecture de ${file.name}…`, 30000);
     const { places, report } = await readPlaces(file, kind);
     app.tool[kind] = places;
+    if (kind === "foyers") app.tool.targets = null;
+    app.tool.grids.clear();
     const label = kind === "foyers" ? "foyers" : "points de vente";
     app.tool.report = [...app.tool.report.filter((row) => row.fichier !== (kind === "foyers" ? "foyer" : "point de vente")), ...report];
     app.tool.times.clear();
@@ -2146,7 +2188,7 @@ function updateToolPanel() {
     parts.push(toolCountsList(times, thresholds));
     line(
       app.mode === "tc"
-        ? "Transports en commun : calcul simplifié provisoire (marche à vol d'oiseau jusqu'aux arrêts)."
+        ? "Marche par les rues et horaires TaM, médiane des départs de 7 h à 20 h (méthode de r5py)."
         : `${ROAD_MODES[app.mode].label} : ${ROAD_MODES[app.mode].describe}.`,
       "r5-source",
     );
@@ -2252,6 +2294,7 @@ async function restoreMemory(file) {
     }
     toast(`${saved.entries.length} calculs restaurés.`);
     app.tool.times.clear();
+    app.tool.grids.clear();
     await runTool();
   } catch (error) {
     toast(`Restauration impossible : ${error.message}`, 7000);

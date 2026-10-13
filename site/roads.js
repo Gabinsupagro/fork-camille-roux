@@ -27,6 +27,7 @@ export const ROAD_MODES = {
   },
 };
 
+export const WALK_KMH = 4.5; // vitesse de marche, comme r5_isochrones.py
 const BUCKET = 250; // mètres : maille de la recherche du nœud le plus proche
 const MAX_SNAP = 2000; // mètres : au-delà, pas de rue utilisable
 
@@ -139,7 +140,15 @@ function buildMode(net, mode) {
     forward.push([from, to, cost]);
     backward.push([to, from, cost]);
   };
-  if (mode === "voiture") {
+  if (mode === "marche") {
+    // À pied : toutes les voies ouvertes aux piétons, dans les deux sens (graphe symétrique : un seul sens suffit).
+    const pace = 1 / (WALK_KMH / 3.6);
+    for (let e = 0; e < net.m; e += 1) {
+      if (!(net.flags[e] & 16)) continue;
+      const cost = (net.length[e] / 10) * pace;
+      forward.push([net.a[e], net.b[e], cost], [net.b[e], net.a[e], cost]);
+    }
+  } else if (mode === "voiture") {
     for (let e = 0; e < net.m; e += 1) {
       const f = net.flags[e];
       if (!(f & 3)) continue;
@@ -176,11 +185,13 @@ function buildMode(net, mode) {
   if (mode === "voiture") {
     for (let i = 0; i < net.n; i += 1) if (net.nodeFlags[i] & 4) penalty[i] = ROAD_MODES.voiture.junctionSeconds;
   }
-  const accessSpeed = mode === "voiture" ? ROAD_MODES.voiture.accessMetersPerSecond : ROAD_MODES.velo.cyclingKmh / 3.6;
+  const accessSpeed =
+    mode === "voiture" ? ROAD_MODES.voiture.accessMetersPerSecond : mode === "marche" ? WALK_KMH / 3.6 : ROAD_MODES.velo.cyclingKmh / 3.6;
+  const csr = buildCsr(net.n, forward);
   return {
     mode,
-    forward: buildCsr(net.n, forward),
-    backward: buildCsr(net.n, backward),
+    forward: csr,
+    backward: mode === "marche" ? csr : buildCsr(net.n, backward),
     buckets,
     penalty,
     accessSpeed,
@@ -292,5 +303,47 @@ export async function loadRoads(url, cells) {
     return Number.isFinite(time) ? (time + end.meters / graph.accessSpeed) / 60 + ROAD_MODES[solution.mode].extremites : null;
   }
 
-  return { solve, cellMinutes, minutesTo, nodeCount: net.n };
+  // --- Marche, pour le calcul transports en commun (transit.js) ---
+  const walkGraph = buildMode(net, "marche");
+  const scratch = new Float32Array(net.n).fill(Infinity);
+  const heap = new Heap(4096);
+
+  /**
+   * Plus courts chemins à pied depuis un nœud, jusqu'à `limit` secondes : appelle visit(nœud, secondes) pour chaque
+   * nœud atteint. Tableaux de travail réutilisés : rapide même appelé des milliers de fois.
+   */
+  function walkFrom(node, startSeconds, limit, visit) {
+    const { offsets, targets, costs } = walkGraph.forward;
+    const touched = [node];
+    startSeconds = Math.fround(startSeconds); // comme les temps du tableau (float32), sinon le départ serait sauté
+    scratch[node] = startSeconds;
+    heap.size = 0;
+    heap.push(startSeconds, node);
+    while (heap.size) {
+      const current = heap.pop();
+      const time = heap.top;
+      if (time > scratch[current]) continue;
+      if (time > limit) break;
+      visit(current, time);
+      for (let k = offsets[current]; k < offsets[current + 1]; k += 1) {
+        const next = targets[k];
+        const arrival = Math.fround(time + costs[k]);
+        if (arrival < scratch[next]) {
+          if (scratch[next] === Infinity) touched.push(next);
+          scratch[next] = arrival;
+          heap.push(arrival, next);
+        }
+      }
+    }
+    for (const t of touched) scratch[t] = Infinity;
+  }
+
+  const walk = {
+    speed: WALK_KMH / 3.6,
+    snap: (point) => snap(net, walkGraph, point),
+    from: walkFrom,
+    nodeCount: net.n,
+  };
+
+  return { solve, cellMinutes, minutesTo, nodeCount: net.n, walk };
 }
