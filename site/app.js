@@ -104,11 +104,11 @@ const app = {
   addresses: null, // index des adresses de la Métropole (géocodage local)
   addressesLoading: null,
   // Données importées par l'utilisateur (lues dans le navigateur, jamais envoyées) et temps calculés :
-  // times : clé « id du point de vente|mode » → minutes vers chaque foyer (NaN : inaccessible).
+  // times : clé « id du point de vente|mode » → minutes de chaque foyer vers le point de vente (NaN : inaccessible).
   // grids : clé « id du point de vente|tc » → minutes vers chaque case de la carte (isochrones transports en commun).
   // live : minutes vers chaque foyer depuis le départ (ou l'arrivée) de la carte affichée, recalculées à chaque calcul.
   // hover, selected : lieu survolé, lieux cliqués (« f3 » : foyers[3], « v2 » : ventes[2]) : seuls ceux-là ont leur étiquette.
-  tool: { foyers: [], ventes: [], report: [], times: new Map(), grids: new Map(), active: null, busy: false, targets: null,
+  tool: { foyers: [], ventes: [], report: [], times: new Map(), grids: new Map(), active: null, busy: false, cellTargets: null,
           live: null, hover: null, selected: new Set(), focus: null,
           // Calcul porte à porte depuis un foyer choisi (transports en commun) : clé « foyer|points de vente » →
           // { ventes : minutes vers chaque point de vente, grid : minutes vers chaque case de la carte }.
@@ -2109,30 +2109,20 @@ const toolDb = (() => {
   };
 })();
 
-/** Minutes du point de vente vers chaque foyer, dans un mode (NaN : inaccessible ou au-delà de 90 min). */
-function computeTimes(vente, mode, foyers) {
-  const out = new Float32Array(foyers.length).fill(NaN);
-  if (mode === "tc") {
-    // Toutes les destinations préparées d'un coup (foyers puis cases de la carte) : un seul calcul par point de vente.
-    const all = app.transit.solve(vente.point, app.tool.targets);
-    const index = new Map(app.tool.foyers.map((foyer, i) => [foyer.key, i]));
-    foyers.forEach((foyer, i) => {
-      out[i] = all[index.get(foyer.key)];
-    });
-    app.tool.grids.set(`${vente.id}|tc`, all.slice(app.tool.foyers.length));
-  } else {
-    const solution = app.roads.solve(mode, vente.point, { maxMinutes: TOOL_MAX_MINUTES + 5 });
-    foyers.forEach((foyer, i) => {
-      out[i] = app.roads.minutesTo(solution, foyer.point) ?? NaN;
-    });
-  }
-  return out.map((minutes) => (minutes <= TOOL_MAX_MINUTES ? minutes : NaN));
-}
-
 const toolModes = (vente) => (vente.parking ? ["tc", "velo", "voiture"] : ["tc", "velo"]);
 const nextFrame = () => new Promise((resolve) => setTimeout(resolve, 0));
+// Sens des temps du récapitulatif : du foyer vers le point de vente (trajet d'achat).
+const TOOL_DIRECTION = "foyer-vers-vente";
+const roundMinutes = (minutes) => (Number.isFinite(minutes) && minutes <= TOOL_MAX_MINUTES ? Math.round(minutes * 10) / 10 : null);
 
-/** Calcule ce qui manque (foyers × points de vente × modes), en reprenant la mémoire du navigateur. */
+/**
+ * Calcule ce qui manque (foyers × points de vente × modes), en reprenant la mémoire du navigateur. Temps du foyer
+ * vers le point de vente :
+ * - vélo, voiture : un calcul à rebours depuis chaque point de vente (sens uniques pris à contresens) ;
+ * - transports en commun : un calcul porte à porte par foyer, vers tous les points de vente (horaires TaM,
+ *   médiane des départs du foyer de 7 h à 20 h) : c'est la partie longue.
+ * Les isochrones dessinées autour d'un point de vente restent calculées depuis lui (une par point de vente).
+ */
 async function runTool({ only = null } = {}) {
   const { foyers } = app.tool;
   const ventes = only ?? app.tool.ventes;
@@ -2145,43 +2135,86 @@ async function runTool({ only = null } = {}) {
       await nextFrame();
       app.transit = await loadTransit(HORAIRES_URL, app.roads.walk);
     }
-    if (!app.tool.targets) {
-      toast("Préparation des trajets à pied vers les foyers…", 30000);
-      await nextFrame();
-      app.tool.targets = app.transit.prepareTargets([...foyers.map((foyer) => foyer.point), ...app.data.cells.map((cell) => cell.point)]);
+    const dbKey = (mode, vente) => `${TOOL_MODEL}|${TOOL_DIRECTION}|${mode}|${vente.key}`;
+    const saved = new Map();
+    for (const vente of ventes) {
+      for (const mode of toolModes(vente)) {
+        saved.set(`${vente.id}|${mode}`, (await toolDb.get(dbKey(mode, vente)).catch(() => null)) ?? {});
+      }
     }
-    const jobs = ventes.flatMap((vente) => toolModes(vente).map((mode) => [vente, mode]));
+    const store = (vente, mode) =>
+      toolDb.put(dbKey(mode, vente), saved.get(`${vente.id}|${mode}`)).catch((error) => console.warn("Mémoire du navigateur indisponible", error));
     let reused = 0;
     let computed = 0;
-    for (const [n, [vente, mode]] of jobs.entries()) {
-      const key = `${TOOL_MODEL}|${mode}|${vente.key}`;
-      const saved = (await toolDb.get(key).catch(() => null)) ?? {};
+
+    // 1. Isochrones des points de vente (transports en commun), depuis chacun d'eux vers les cases de la carte.
+    for (const [n, vente] of ventes.entries()) {
+      if (app.tool.grids.has(`${vente.id}|tc`)) continue;
       const gridKey = `${TOOL_MODEL}|grille|${vente.key}`;
-      if (mode === "tc" && !app.tool.grids.has(`${vente.id}|tc`)) {
-        const grid = await toolDb.get(gridKey).catch(() => null);
-        if (grid) app.tool.grids.set(`${vente.id}|tc`, Float32Array.from(grid, (value) => value ?? NaN));
-      }
-      // En transports en commun, la grille de la carte se calcule avec les foyers : refaite si elle manque.
-      const missing = mode === "tc" && !app.tool.grids.has(`${vente.id}|tc`) ? foyers : foyers.filter((foyer) => !(foyer.key in saved));
-      if (missing.length) {
-        toast(`Calcul ${n + 1} / ${jobs.length} : ${vente.id}, ${MODE_LABELS[mode]}…`, 60000);
+      let grid = await toolDb.get(gridKey).catch(() => null);
+      if (!grid) {
+        toast(`Isochrones ${n + 1} / ${ventes.length} : ${vente.id}…`, 60000);
         await nextFrame();
-        const minutes = computeTimes(vente, mode, missing);
-        missing.forEach((foyer, i) => {
-          saved[foyer.key] = Number.isNaN(minutes[i]) ? null : Math.round(minutes[i] * 10) / 10;
-        });
-        await toolDb.put(key, saved).catch((error) => console.warn("Mémoire du navigateur indisponible", error));
-        if (mode === "tc") {
-          const grid = Array.from(app.tool.grids.get(`${vente.id}|tc`), (value) => (Number.isNaN(value) ? null : value));
-          await toolDb.put(gridKey, grid).catch(() => {});
-        }
-        computed += missing.length;
+        if (!app.tool.cellTargets) app.tool.cellTargets = app.transit.prepareTargets(app.data.cells.map((cell) => cell.point));
+        grid = Array.from(app.transit.solve(vente.point, app.tool.cellTargets), (value) => (Number.isNaN(value) ? null : value));
+        await toolDb.put(gridKey, grid).catch(() => {});
       }
-      reused += foyers.length - missing.length;
-      app.tool.times.set(
-        `${vente.id}|${mode}`,
-        Float32Array.from(foyers, (foyer) => saved[foyer.key] ?? NaN),
-      );
+      app.tool.grids.set(`${vente.id}|tc`, Float32Array.from(grid, (value) => value ?? NaN));
+    }
+
+    // 2. Vélo, voiture : calcul à rebours depuis le point de vente (temps de chaque lieu vers lui).
+    for (const vente of ventes) {
+      for (const mode of toolModes(vente).filter((item) => item !== "tc")) {
+        const dict = saved.get(`${vente.id}|${mode}`);
+        const missing = foyers.filter((foyer) => !(foyer.key in dict));
+        if (missing.length) {
+          toast(`${MODE_LABELS[mode]} : ${vente.id}…`, 60000);
+          await nextFrame();
+          const solution = app.roads.solve(mode, vente.point, { maxMinutes: TOOL_MAX_MINUTES + 5, reverse: true });
+          for (const foyer of missing) dict[foyer.key] = roundMinutes(app.roads.minutesTo(solution, foyer.point) ?? NaN);
+          await store(vente, mode);
+          computed += missing.length;
+        }
+        reused += foyers.length - missing.length;
+      }
+    }
+
+    // 3. Transports en commun : un calcul par foyer (lieu), vers tous les points de vente à la fois.
+    const dicts = ventes.map((vente) => saved.get(`${vente.id}|tc`));
+    const places = [...new Map(foyers.map((foyer) => [foyer.key, foyer])).values()];
+    const todo = places.filter((foyer) => dicts.some((dict) => !(foyer.key in dict)));
+    reused += foyers.length - foyers.filter((foyer) => dicts.some((dict) => !(foyer.key in dict))).length;
+    if (todo.length) {
+      const targets = app.transit.prepareTargets(ventes.map((vente) => vente.point));
+      const started = performance.now();
+      let lastSave = started;
+      for (const [n, foyer] of todo.entries()) {
+        const minutes = app.transit.solve(foyer.point, targets);
+        dicts.forEach((dict, j) => {
+          dict[foyer.key] = roundMinutes(minutes[j]);
+        });
+        computed += foyers.filter((item) => item.key === foyer.key).length;
+        const now = performance.now();
+        if (now - lastSave > 3000 || n === todo.length - 1) {
+          // Enregistré au fil de l'eau : un calcul interrompu reprend où il s'était arrêté.
+          await Promise.all(ventes.map((vente) => store(vente, "tc")));
+          lastSave = now;
+          const left = ((now - started) / (n + 1)) * (todo.length - n - 1);
+          toast(
+            `Transports en commun : foyer ${n + 1} / ${todo.length}` +
+              (n < todo.length - 1 ? ` — encore ~${Math.max(1, Math.round(left / 60000))} min` : ""),
+            60000,
+          );
+          await nextFrame();
+        }
+      }
+    }
+
+    for (const vente of ventes) {
+      for (const mode of toolModes(vente)) {
+        const dict = saved.get(`${vente.id}|${mode}`);
+        app.tool.times.set(`${vente.id}|${mode}`, Float32Array.from(foyers, (foyer) => dict[foyer.key] ?? NaN));
+      }
     }
     toast(
       computed
@@ -2211,7 +2244,6 @@ async function importPlaces(file, kind) {
     for (const vente of manual) vente.id = uniqueVenteId(vente.name, ids);
     app.tool[kind] = [...places, ...manual];
     if (kind === "foyers") {
-      app.tool.targets = null;
       app.tool.live = null;
       app.tool.focus = null;
     }
@@ -2611,8 +2643,9 @@ function updateToolPanel() {
     if (doorToDoor) {
       line(
         app.mode === "tc"
-          ? "Marche par les rues et horaires TaM, médiane des départs de 7 h à 20 h (méthode de r5py)."
-          : `${ROAD_MODES[app.mode].label} : ${ROAD_MODES[app.mode].describe}.`,
+          ? "Des foyers vers le point de vente : marche par les rues et horaires TaM, médiane des départs de 7 h à 20 h " +
+              "(méthode de r5py). Isochrones dessinées depuis le point de vente."
+          : `Des foyers vers le point de vente. ${ROAD_MODES[app.mode].label} : ${ROAD_MODES[app.mode].describe}.`,
         "r5-source",
       );
     } else {
@@ -2752,7 +2785,7 @@ function exportRecap() {
       const times = app.tool.times.get(`${vente.id}|${mode}`);
       for (const threshold of thresholds) {
         if (!times) {
-          rows.push([vente.id, vente.label, MODE_LABELS[mode], threshold, null, null,
+          rows.push([vente.id, vente.label, MODE_LABELS[mode], threshold, null, null, "foyer → point de vente",
             mode === "voiture" ? "pas de parking : voiture non calculée" : "non calculé"]);
           continue;
         }
@@ -2764,11 +2797,11 @@ function exportRecap() {
             people += foyer.personnes;
           }
         });
-        rows.push([vente.id, vente.label, MODE_LABELS[mode], threshold, count, Math.round(people * 100) / 100, ""]);
+        rows.push([vente.id, vente.label, MODE_LABELS[mode], threshold, count, Math.round(people * 100) / 100, "foyer → point de vente", ""]);
       }
     }
   }
-  downloadCsv("recapitulatif.csv", ["point de vente", "adresse", "mode", "isochrone (min)", "foyers", "personnes", "remarque"], rows);
+  downloadCsv("recapitulatif.csv", ["point de vente", "adresse", "mode", "isochrone (min)", "foyers", "personnes", "sens du trajet", "remarque"], rows);
 }
 
 function exportCheck() {

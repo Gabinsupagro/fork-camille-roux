@@ -22,8 +22,10 @@ Ouvrir la page (en local : voir « Lancer » ; en ligne : l'adresse GitHub Pages
 1. « Foyers… » : un CSV des foyers (identifiant `name` ou `id`, adresse `result_label`, `Adresses` ou `adresse`, ou
    `Latitude` et `Longitude`, et `nb_personne`, 1 par défaut) ;
 2. « Points de vente… » : un CSV des points de vente (mêmes colonnes, plus `type` et `parking` oui/non) ;
-3. la page place les adresses (index local de la Base Adresse Nationale), calcule les temps de chaque point de vente
-   vers chaque foyer (marche + transports en commun, vélo, et voiture s'il y a un parking), puis propose la liste des
+3. la page place les adresses (index local de la Base Adresse Nationale), calcule les temps de chaque foyer vers
+   chaque point de vente (marche + transports en commun, vélo, et voiture s'il y a un parking ; en transports en
+   commun, un calcul par foyer, quelques dixièmes de seconde chacun ; en vélo et en voiture, un calcul à rebours par
+   point de vente ; les isochrones dessinées partent du point de vente), puis propose la liste des
    points de vente : la carte montre ses isochrones et les foyers, le panneau les foyers et personnes dans chaque
    isochrone ;
 4. « Récapitulatif (CSV) » : le tableau foyers et personnes par point de vente, mode et isochrone cochée (5, 15, 30,

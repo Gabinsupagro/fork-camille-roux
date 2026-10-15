@@ -94,7 +94,7 @@
             <label class="button primary file-button" title="Fichier CSV des points de vente : identifiant, adresse (ou latitude et longitude), type, parking">
               Points de vente…<input id="ventesFile" type="file" accept=".csv,text/csv" />
             </label>
-            <button id="addVenteToggle" type="button" class="button" aria-expanded="false" aria-controls="addVente" title="Ajouter un point de vente à la main : ses temps vers les foyers et ses isochrones sont calculés dans la page">+ Point de vente</button>
+            <button id="addVenteToggle" type="button" class="button" aria-expanded="false" aria-controls="addVente" title="Ajouter un point de vente à la main : les temps des foyers vers lui et ses isochrones sont calculés dans la page">+ Point de vente</button>
             <select id="venteSelect" aria-label="Point de vente" hidden></select>
             <button id="exportRecap" type="button" class="button" hidden title="Foyers et personnes dans chaque isochrone, pour chaque point de vente et chaque mode">Récapitulatif (CSV)</button>
             <button id="exportCheck" type="button" class="button" hidden title="Comment chaque adresse a été placée sur la carte">Contrôle des adresses</button>
@@ -224,8 +224,10 @@
           en vélo et en voiture, les calculs ci-dessus&nbsp;; en transports en commun, marche par les rues jusqu'aux arrêts
           (correspondances à pied jusqu'à 1&nbsp;km, depuis le dernier arrêt jusqu'à 2&nbsp;km), horaires TaM bus compris,
           au moins 1&nbsp;min d'attente à chaque montée, et médiane des temps pour des départs chaque minute de 7&nbsp;h à
-          20&nbsp;h. Écart moyen avec r5py d'environ 1,5&nbsp;min. Les isochrones affichées pour un point de vente sont
-          celles de ce calcul.
+          20&nbsp;h. Écart moyen avec r5py d'environ 1,5&nbsp;min. Les temps vont <strong>du foyer vers le point de
+          vente</strong> (trajet d'achat)&nbsp;: en transports en commun, un calcul par foyer (quelques dixièmes de
+          seconde chacun, gardés en mémoire). Les isochrones affichées pour un point de vente sont calculées depuis lui,
+          avec la même méthode&nbsp;; avec les horaires, l'aller et le retour peuvent différer d'une ou deux minutes.
         </p>
         <p>
           <strong>Résultats r5py</strong> (calculés sur votre ordinateur avec <code>r5_isochrones.py</code>)&nbsp;: temps
@@ -300,6 +302,6 @@
     </main>
 
     <div id="toast" class="toast" role="status" hidden></div>
-    <script type="module" src="./app.js?v=42"></script>
+    <script type="module" src="./app.js?v=43"></script>
   </body>
 </html>
