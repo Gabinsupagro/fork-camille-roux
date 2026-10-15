@@ -1352,7 +1352,7 @@ function restoreFromUrl() {
   app.showBasemap = background !== "0";
   if (background in PROVIDERS) app.provider = background;
   const opacity = Number(params.get("opacite"));
-  if (params.has("opacite") && opacity >= 20 && opacity <= 100) app.heatOpacity = opacity / 100;
+  if (params.has("opacite") && opacity >= 0 && opacity <= 100) app.heatOpacity = opacity / 100;
   $("basemapToggle").checked = app.showBasemap;
   app.showNetwork = params.get("lignes") !== "0";
   $("networkToggle").checked = app.showNetwork;

@@ -136,7 +136,7 @@
             <label class="pill-toggle"><input id="basemapToggle" type="checkbox" checked /> Fond de carte</label>
             <label class="pill-toggle"><input id="networkToggle" type="checkbox" checked /> Lignes et arrêts</label>
             <label class="control-label" for="heatOpacity">Couleurs</label>
-            <input id="heatOpacity" type="range" min="20" max="100" step="5" value="60" />
+            <input id="heatOpacity" type="range" min="0" max="100" step="5" value="60" />
             <output id="heatOpacityValue" for="heatOpacity">60 %</output>
           </div>
           <!-- Fichiers produits par la page (récapitulatifs, contrôle) et mémoire des calculs : à part de la carte. -->
@@ -275,6 +275,6 @@
     </main>
 
     <div id="toast" class="toast" role="status" hidden></div>
-    <script type="module" src="./app.js?v=46"></script>
+    <script type="module" src="./app.js?v=47"></script>
   </body>
 </html>
