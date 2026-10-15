@@ -109,7 +109,10 @@ const app = {
   // live : minutes vers chaque foyer depuis le départ (ou l'arrivée) de la carte affichée, recalculées à chaque calcul.
   // hover, selected : lieu survolé, lieux cliqués (« f3 » : foyers[3], « v2 » : ventes[2]) : seuls ceux-là ont leur étiquette.
   tool: { foyers: [], ventes: [], report: [], times: new Map(), grids: new Map(), active: null, busy: false, targets: null,
-          live: null, hover: null, selected: new Set(), focus: null },
+          live: null, hover: null, selected: new Set(), focus: null,
+          // Calcul porte à porte depuis un foyer choisi (transports en commun) : clé « foyer|points de vente » →
+          // { ventes : minutes vers chaque point de vente, grid : minutes vers chaque case de la carte }.
+          focusCalcs: new Map(), focusTargets: null, focusBusy: false },
   // focus : foyer cliqué (indice), devenu le départ ; le panneau liste les points de vente dans ses isochrones.
   heatVersion: 0, // augmente à chaque calcul de la carte : les temps des foyers sont alors à refaire
   heatRoad: null, // calcul voiture ou vélo d'où vient la carte (départ, ou arrivée prise à rebours)
@@ -1083,6 +1086,19 @@ function recompute({ fast = false } = {}) {
     return;
   }
   if (!app.from) return;
+  const focus = focusTransitCalc();
+  if (focus) {
+    // Foyer choisi, transports en commun : isochrones du calcul porte à porte depuis lui (celui de la liste).
+    app.solution = solveFrom(app.from.point);
+    app.heatSolution = app.solution;
+    app.roadSolution = null;
+    app.grid = roadGrid(focus.grid);
+    paintHeat(app.grid, { fast });
+    updatePanel();
+    requestRender();
+    return;
+  }
+  if (app.tool.focus !== null && app.mode === "tc" && !fast) ensureFocusCalc();
   const toolGrid =
     app.tool.active && app.mode === "tc" && heatSource() === app.from ? app.tool.grids.get(`${app.tool.active}|tc`) : null;
   if (toolGrid) {
@@ -2181,6 +2197,7 @@ async function runTool({ only = null } = {}) {
     fillVenteSelect();
     updatePanel();
     requestRender();
+    if (app.tool.focus !== null && app.mode === "tc") ensureFocusCalc(); // attendait la fin de ce calcul
   }
 }
 
@@ -2295,6 +2312,7 @@ function activateVente(id) {
   if (!vente) return;
   if (app.r5.active) leaveR5();
   app.tool.active = id;
+  app.tool.focus = null;
   app.from = { point: vente.point, label: vente.label !== vente.id ? `${vente.id} · ${vente.label}` : vente.id };
   app.to = null;
   app.heatFrom = "from";
@@ -2422,8 +2440,7 @@ function focusFoyer(index) {
   if (!setFrom(foyer.point, `Foyer ${foyer.id} · ${formatPeople(foyer.personnes)}`, { quiet: true })) return;
   app.tool.focus = index;
   fillVenteSelect();
-  updatePanel();
-  requestRender();
+  recompute(); // en transports en commun : calcul porte à porte depuis le foyer (repris s'il est déjà fait)
 }
 
 const formatPeople = (n) => `${n.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} pers.`;
@@ -2432,6 +2449,52 @@ const formatPeople = (n) => `${n.toLocaleString("fr-FR", { maximumFractionDigits
 function fromMinutesFn() {
   if (app.mode !== "tc") return app.roadSolution ? (point) => roadMinutesTo(point) : null;
   return app.solution ? (point) => travelTo(app.solution, point).minutes : null;
+}
+
+const focusKey = () => {
+  const foyer = app.tool.foyers[app.tool.focus];
+  return foyer ? `${foyer.key}|${app.tool.ventes.map((vente) => vente.key).join(";")}` : null;
+};
+
+/** Calcul porte à porte du foyer choisi, s'il est fait et que la carte part de lui en transports en commun. */
+function focusTransitCalc() {
+  if (app.tool.focus === null || app.mode !== "tc" || app.r5.active || heatSource() !== app.from) return null;
+  return app.tool.focusCalcs.get(focusKey()) ?? null;
+}
+
+/**
+ * Calcul porte à porte (horaires TaM, médiane des départs de 7 h à 20 h) du foyer choisi vers les points de vente
+ * et vers chaque case de la carte, comme pour un point de vente mais dans le sens foyer → point de vente.
+ */
+async function ensureFocusCalc() {
+  const key = focusKey();
+  if (!key || app.tool.focusCalcs.has(key) || app.tool.focusBusy || app.tool.busy) return;
+  app.tool.focusBusy = true;
+  const foyer = app.tool.foyers[app.tool.focus];
+  try {
+    toast(`Calcul porte à porte depuis le foyer ${foyer.id}…`, 30000);
+    await nextFrame();
+    await ensureRoads();
+    if (!app.transit) app.transit = await loadTransit(HORAIRES_URL, app.roads.walk);
+    const ventesKey = app.tool.ventes.map((vente) => vente.key).join(";");
+    if (app.tool.focusTargets?.key !== ventesKey) {
+      // Destinations préparées une fois pour toutes : points de vente puis cases de la carte.
+      const points = [...app.tool.ventes.map((vente) => vente.point), ...app.data.cells.map((cell) => cell.point)];
+      app.tool.focusTargets = { key: ventesKey, targets: app.transit.prepareTargets(points) };
+    }
+    const all = app.transit.solve(foyer.point, app.tool.focusTargets.targets);
+    const n = app.tool.ventes.length;
+    const clean = (values) => Float32Array.from(values, (value) => (Number.isFinite(value) && value <= TOOL_MAX_MINUTES ? value : NaN));
+    app.tool.focusCalcs.set(key, { ventes: clean(all.slice(0, n)), grid: clean(all.slice(n)) });
+    toast(`Calcul porte à porte depuis le foyer ${foyer.id} terminé.`, 2500);
+  } catch (error) {
+    console.error(error);
+    toast(`Calcul impossible : ${error.message}`, 8000);
+  } finally {
+    app.tool.focusBusy = false;
+  }
+  if (focusKey() === key) recompute(); // toujours sur ce foyer : carte et liste du calcul porte à porte
+  else if (app.tool.focus !== null && app.mode === "tc") ensureFocusCalc(); // un autre foyer a été choisi entre-temps
 }
 
 /** Panneau du foyer choisi : points de vente dans chaque isochrone, avec leurs temps. */
@@ -2447,16 +2510,27 @@ function updateFocusPanel() {
     parts.push(p);
   };
   line(`${R5_MODES[app.mode]} · depuis le foyer ${foyer.id} (${formatPeople(foyer.personnes)})`, "trip-eyebrow");
-  const at = fromMinutesFn();
+  // Transports en commun : calcul porte à porte depuis le foyer ; vélo, voiture : le calcul de la carte, depuis le foyer.
+  let at = null;
+  if (app.mode === "tc") {
+    const calc = app.tool.focusCalcs.get(focusKey());
+    if (calc) {
+      const index = new Map(app.tool.ventes.map((vente, i) => [vente, i]));
+      at = (point, vente) => calc.ventes[index.get(vente)];
+    }
+  } else {
+    const road = fromMinutesFn();
+    if (road) at = (point) => road(point);
+  }
   if (!app.tool.ventes.length) {
     line("Importez des points de vente pour voir ceux qui sont dans les isochrones de ce foyer.", "r5-source");
   } else if (!at) {
-    line("Calcul en cours…", "r5-source");
+    line(app.mode === "tc" ? "Calcul porte à porte en cours (horaires TaM, médiane des départs de 7 h à 20 h)…" : "Calcul en cours…", "r5-source");
   } else {
     // En voiture, seuls les points de vente avec parking comptent.
     const usable = app.mode === "voiture" ? app.tool.ventes.filter((vente) => vente.parking) : app.tool.ventes;
     const reached = usable
-      .map((vente) => ({ vente, minutes: at(vente.point) }))
+      .map((vente) => ({ vente, minutes: at(vente.point, vente) }))
       .filter((item) => Number.isFinite(item.minutes))
       .sort((a, b) => a.minutes - b.minutes);
     const thresholds = app.isochrones.length ? [...app.isochrones].sort((a, b) => a - b) : [app.maxMinutes];
@@ -2487,7 +2561,13 @@ function updateFocusPanel() {
     parts.push(list);
     const skipped = app.tool.ventes.length - usable.length;
     if (skipped) line(`${skipped} point${skipped > 1 ? "s" : ""} de vente sans parking non compté${skipped > 1 ? "s" : ""} en voiture.`, "r5-source");
-    line("Même calcul que la carte, du foyer vers les points de vente. Cliquez à nouveau le foyer pour le quitter.", "r5-source");
+    line(
+      app.mode === "tc"
+        ? "Du foyer vers les points de vente : marche par les rues et horaires TaM, médiane des départs de 7 h à 20 h (méthode de r5py)."
+        : `Du foyer vers les points de vente. ${ROAD_MODES[app.mode].label} : ${ROAD_MODES[app.mode].describe}.`,
+      "r5-source",
+    );
+    line("Cliquez le rond vert pour quitter ce foyer.", "r5-source");
   }
   info.replaceChildren(...parts);
 }
