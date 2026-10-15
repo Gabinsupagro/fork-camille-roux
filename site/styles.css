@@ -733,6 +733,42 @@ output {
   font-size: 0.9rem;
 }
 
+/* Point de vente ajouté à la main. */
+.add-vente {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.add-vente[hidden] {
+  display: none;
+}
+
+.add-vente input[type="text"] {
+  flex: 1 1 200px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.add-vente input#addVenteAddress {
+  flex-grow: 2;
+}
+
+.add-vente-parking {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.9rem;
+}
+
 /* Isochrone choisie par l'utilisateur : champ « Autre » et bouton pour la retirer. */
 .iso-custom {
   display: inline-flex;

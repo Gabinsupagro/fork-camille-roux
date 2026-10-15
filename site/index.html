@@ -19,7 +19,7 @@
     <link rel="icon" href="./favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
 
-    <link rel="stylesheet" href="./styles.css?v=16" />
+    <link rel="stylesheet" href="./styles.css?v=17" />
   </head>
   <body>
 
@@ -94,6 +94,7 @@
             <label class="button primary file-button" title="Fichier CSV des points de vente : identifiant, adresse (ou latitude et longitude), type, parking">
               Points de vente…<input id="ventesFile" type="file" accept=".csv,text/csv" />
             </label>
+            <button id="addVenteToggle" type="button" class="button" aria-expanded="false" aria-controls="addVente" title="Ajouter un point de vente à la main : ses temps vers les foyers et ses isochrones sont calculés dans la page">+ Point de vente</button>
             <select id="venteSelect" aria-label="Point de vente" hidden></select>
             <button id="exportRecap" type="button" class="button" hidden title="Foyers et personnes dans chaque isochrone, pour chaque point de vente et chaque mode">Récapitulatif (CSV)</button>
             <button id="exportCheck" type="button" class="button" hidden title="Comment chaque adresse a été placée sur la carte">Contrôle des adresses</button>
@@ -101,6 +102,13 @@
             <label class="button file-button" title="Reprendre une sauvegarde des calculs">
               Restaurer…<input id="restoreMemory" type="file" accept=".json,application/json" />
             </label>
+            <!-- Point de vente saisi à la main : géocodé avec la base d'adresses de la page, rien n'est envoyé. -->
+            <form id="addVente" class="add-vente" hidden>
+              <input id="addVenteName" type="text" placeholder="Nom (ex. Épicerie du quartier)" aria-label="Nom du point de vente" required />
+              <input id="addVenteAddress" type="text" placeholder="Adresse, code postal ou commune (ex. 2 rue de la Loge 34000 Montpellier)" aria-label="Adresse du point de vente" required />
+              <label class="add-vente-parking"><input id="addVenteParking" type="checkbox" /> parking</label>
+              <button type="submit" class="button primary">Ajouter et calculer</button>
+            </form>
           </div>
           <div class="control-group">
             <label class="control-label" for="modeSelect">Mode</label>
@@ -292,6 +300,6 @@
     </main>
 
     <div id="toast" class="toast" role="status" hidden></div>
-    <script type="module" src="./app.js?v=35"></script>
+    <script type="module" src="./app.js?v=36"></script>
   </body>
 </html>

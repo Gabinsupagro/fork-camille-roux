@@ -1154,7 +1154,7 @@ function setHeatFrom(source) {
 
 function updatePanel() {
   $("tripFrom").textContent = app.from?.label ?? "—";
-  const foyersShown = Boolean(app.tool.active || app.tool.foyers.length);
+  const foyersShown = app.tool.foyers.length > 0;
   $("r5Info").hidden = !app.r5.active && !foyersShown;
   if (foyersShown && !app.r5.active) updateToolPanel(); // comptes de foyers, sous l'itinéraire habituel
   if (app.r5.active) {
@@ -2080,8 +2080,9 @@ const toolModes = (vente) => (vente.parking ? ["tc", "velo", "voiture"] : ["tc",
 const nextFrame = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 /** Calcule ce qui manque (foyers × points de vente × modes), en reprenant la mémoire du navigateur. */
-async function runTool() {
-  const { foyers, ventes } = app.tool;
+async function runTool({ only = null } = {}) {
+  const { foyers } = app.tool;
+  const ventes = only ?? app.tool.ventes;
   if (!foyers.length || !ventes.length || app.tool.busy) return;
   app.tool.busy = true;
   try {
@@ -2150,7 +2151,11 @@ async function importPlaces(file, kind) {
   try {
     toast(`Lecture de ${file.name}…`, 30000);
     const { places, report } = await readPlaces(file, kind);
-    app.tool[kind] = places;
+    // Les points de vente ajoutés à la main restent, après ceux du fichier (identifiants rendus uniques).
+    const manual = kind === "ventes" ? app.tool.ventes.filter((vente) => vente.manual) : [];
+    const ids = new Set(places.map((place) => place.id));
+    for (const vente of manual) vente.id = uniqueVenteId(vente.name, ids);
+    app.tool[kind] = [...places, ...manual];
     if (kind === "foyers") {
       app.tool.targets = null;
       app.tool.live = null;
@@ -2159,7 +2164,10 @@ async function importPlaces(file, kind) {
     }
     app.tool.grids.clear();
     const label = kind === "foyers" ? "foyers" : "points de vente";
-    app.tool.report = [...app.tool.report.filter((row) => row.fichier !== (kind === "foyers" ? "foyer" : "point de vente")), ...report];
+    app.tool.report = [
+      ...app.tool.report.filter((row) => row.fichier !== (kind === "foyers" ? "foyer" : "point de vente")),
+      ...report,
+    ];
     app.tool.times.clear();
     app.tool.active = null;
     const missing = report.length - places.length;
@@ -2180,15 +2188,64 @@ async function importPlaces(file, kind) {
   }
 }
 
+/** Identifiant libre, à partir du nom (« Nom », puis « Nom (2) »…). */
+function uniqueVenteId(name, taken = new Set(app.tool.ventes.map((vente) => vente.id))) {
+  let id = name;
+  for (let n = 2; taken.has(id); n += 1) id = `${name} (${n})`;
+  taken.add(id);
+  return id;
+}
+
+/**
+ * Point de vente saisi à la main : géocodé dans la page (adresse, ou « latitude, longitude »), ajouté à la liste,
+ * puis calculé seul (marche + TC, vélo, voiture s'il a un parking) et affiché avec ses isochrones.
+ */
+async function addVente(name, address, parking) {
+  if (app.tool.busy) {
+    toast("Un calcul est déjà en cours : réessayez dans un instant.", 5000);
+    return false;
+  }
+  const pair = /^\s*(-?\d+(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d+(?:[.,]\d+)?)\s*$/.exec(address);
+  let found;
+  if (pair) {
+    found = { point: toWorld(number(pair[1]), number(pair[2])), qualite: "coordonnées fournies", trouve: "" };
+  } else {
+    toast("Recherche de l'adresse…", 20000);
+    found = (await ensureAddresses()).geocode(address);
+  }
+  if (!found.point) {
+    toast(`Adresse non trouvée (${found.qualite}). Indiquez le numéro, la voie et le code postal ou la commune.`, 8000);
+    return false;
+  }
+  if (!isOnLand(found.point)) {
+    toast("Cette adresse est hors de la Métropole ou sur l'eau.", 7000);
+    return false;
+  }
+  const id = uniqueVenteId(name);
+  const vente = { id, name, manual: true, label: address, point: found.point, key: placeKey(found.point), personnes: 1, parking };
+  app.tool.ventes.push(vente);
+  app.tool.report.push({ fichier: "point de vente", id, adresse: address, qualite: `${found.qualite} (saisi à la main)`, trouve: found.trouve });
+  fillVenteSelect();
+  activateVente(id); // isochrones de la carte tout de suite, depuis le point de vente
+  if (app.tool.foyers.length) {
+    await runTool({ only: [vente] });
+    if (app.tool.active === id) recompute(); // isochrones et comptes du calcul porte à porte
+  } else {
+    toast(`${id} ajouté${found.trouve ? ` (${found.trouve})` : ""}. Importez des foyers pour les compter dans ses isochrones.`, 7000);
+  }
+  return true;
+}
+
 function fillVenteSelect() {
   const select = $("venteSelect");
   const ready = app.tool.ventes.length && app.tool.foyers.length && app.tool.times.size;
+  // Un point de vente ajouté à la main se choisit dans la liste même sans foyers (isochrones seules).
   select.replaceChildren(
     new Option("Choisir un point de vente…", ""),
     ...app.tool.ventes.map((vente) => new Option(vente.parking ? `${vente.id} · parking` : vente.id, vente.id)),
   );
   select.value = app.tool.active ?? "";
-  select.hidden = !ready;
+  select.hidden = !(ready || app.tool.ventes.some((vente) => vente.manual));
   $("exportRecap").hidden = !ready;
   $("exportCheck").hidden = !app.tool.report.length;
 }
@@ -2474,6 +2531,32 @@ $("foyersFile").addEventListener("change", (event) => {
   const [file] = event.target.files;
   event.target.value = "";
   if (file) importPlaces(file, "foyers");
+});
+$("addVenteToggle").addEventListener("click", () => {
+  const form = $("addVente");
+  form.hidden = !form.hidden;
+  $("addVenteToggle").setAttribute("aria-expanded", String(!form.hidden));
+  if (!form.hidden) $("addVenteName").focus();
+});
+$("addVente").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const name = $("addVenteName").value.trim();
+  const address = $("addVenteAddress").value.trim();
+  if (!name || !address) return;
+  const button = event.target.querySelector("button[type=submit]");
+  button.disabled = true;
+  try {
+    if (await addVente(name, address, $("addVenteParking").checked)) {
+      $("addVenteName").value = "";
+      $("addVenteAddress").value = "";
+      $("addVenteParking").checked = false;
+    }
+  } catch (error) {
+    console.error(error);
+    toast(`Ajout impossible : ${error.message}`, 8000);
+  } finally {
+    button.disabled = false;
+  }
 });
 $("ventesFile").addEventListener("change", (event) => {
   const [file] = event.target.files;
