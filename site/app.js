@@ -863,14 +863,17 @@ function drawCommuneNames() {
   }
 }
 
-function drawMarker(point, color, label) {
+/** Marqueur rond ; carré pour un point de vente choisi (comme les carrés des points de vente). */
+function drawMarker(point, color, label, square = false) {
   const [x, y] = project(point);
   ctx.beginPath();
-  ctx.arc(x, y, 15, 0, Math.PI * 2);
+  if (square) ctx.roundRect(x - 14, y - 14, 28, 28, 5);
+  else ctx.arc(x, y, 15, 0, Math.PI * 2);
   ctx.fillStyle = `${color}2e`;
   ctx.fill();
   ctx.beginPath();
-  ctx.arc(x, y, 8, 0, Math.PI * 2);
+  if (square) ctx.rect(x - 7.5, y - 7.5, 15, 15);
+  else ctx.arc(x, y, 8, 0, Math.PI * 2);
   ctx.fillStyle = color;
   ctx.fill();
   ctx.lineWidth = 3;
@@ -1002,7 +1005,11 @@ function render() {
     }
     drawMarker(app.to.point, COLORS.to, app.heatFrom === "to" ? `Arrivée · ${minutes}` : minutes);
   }
-  if (app.from) drawMarker(app.from.point, COLORS.from, "Départ");
+  if (app.from) {
+    const vente = activeVente();
+    const label = vente ? (noParkingShown() ? `${vente.id} · sans parking` : vente.id) : "Départ";
+    drawMarker(app.from.point, COLORS.from, label, Boolean(vente));
+  }
   if (tilesShown) drawAttribution();
 }
 
@@ -1155,7 +1162,7 @@ function setHeatFrom(source) {
 
 function updatePanel() {
   $("tripFrom").textContent = app.from?.label ?? "—";
-  const foyersShown = app.tool.foyers.length > 0;
+  const foyersShown = app.tool.foyers.length > 0 || Boolean(app.tool.active);
   $("r5Info").hidden = !app.r5.active && !foyersShown;
   if (foyersShown && !app.r5.active) updateToolPanel(); // comptes de foyers, sous l'itinéraire habituel
   if (app.r5.active) {
@@ -1824,6 +1831,7 @@ $("modeSelect").addEventListener("change", (event) => {
   setModeControls(event.target.value);
   if (app.r5.active) refreshR5Grid();
   recompute();
+  noParkingNotice();
   syncUrl();
 });
 
@@ -2269,6 +2277,23 @@ function activateVente(id) {
   app.heatFrom = "from";
   $("venteSelect").value = id;
   recompute();
+  noParkingNotice();
+}
+
+function activeVente() {
+  return app.tool.active ? app.tool.ventes.find((item) => item.id === app.tool.active) ?? null : null;
+}
+
+/** Point de vente choisi sans parking, en mode voiture : pas de calcul porte à porte. */
+function noParkingShown() {
+  const vente = activeVente();
+  return Boolean(vente && app.mode === "voiture" && !vente.parking);
+}
+
+function noParkingNotice() {
+  if (noParkingShown()) {
+    toast(`${app.tool.active} n'a pas de parking : pas de calcul en voiture. La carte montre les temps en voiture depuis son adresse, à titre indicatif.`, 8000);
+  }
 }
 
 function leaveTool() {
@@ -2378,13 +2403,17 @@ function updateToolPanel() {
     vente ? `${R5_MODES[app.mode]} · calcul dans la page` : `${R5_MODES[app.mode]} · ${app.tool.foyers.length} foyers importés`,
     "trip-eyebrow",
   );
-  if (!times) {
+  if (noParkingShown()) {
     line(
-      doorToDoor && app.mode === "voiture" && !vente.parking
-        ? "Pas de calcul en voiture pour ce point de vente : il n'a pas de parking (colonne parking)."
-        : "Calcul en cours…",
-      "r5-source",
+      `🚗 ${vente.id} n'a pas de parking (colonne parking) : pas de calcul porte à porte en voiture, ni de comptes. ` +
+        "La carte montre les temps en voiture depuis son adresse, à titre indicatif.",
+      "r5-warning",
     );
+  }
+  if (!app.tool.foyers.length) {
+    line("Importez des foyers pour les compter dans les isochrones.", "r5-source");
+  } else if (!times) {
+    if (!noParkingShown()) line("Calcul en cours…", "r5-source");
   } else {
     const thresholds = app.isochrones.length ? [...app.isochrones].sort((a, b) => a - b) : [app.maxMinutes];
     line(heatSource() === app.from ? "Foyers dans l'isochrone du départ" : "Foyers dans l'isochrone de l'arrivée", "trip-eyebrow");
@@ -2433,10 +2462,10 @@ function drawFoyers() {
     const inside = time <= app.maxMinutes;
     const [r, g, b] = inside ? paletteColor(time / app.maxMinutes) : [150, 150, 150];
     ctx.beginPath();
-    ctx.arc(x, y, big ? 7 : 5, 0, Math.PI * 2);
+    ctx.arc(x, y, big ? 5.5 : 3.6, 0, Math.PI * 2);
     ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
     ctx.fill();
-    ctx.lineWidth = big ? 2.2 : 1.6;
+    ctx.lineWidth = big ? 1.8 : 1.1;
     ctx.strokeStyle = "#111";
     ctx.stroke();
     return [x, y, time];
@@ -2454,7 +2483,7 @@ function drawFoyers() {
     const minutes = times ? (Number.isFinite(time) ? formatMinutes(time) : "inaccessible") : null;
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
-    drawHaloText([foyer.id, people, minutes].filter(Boolean).join(" · "), x + 10, y, {
+    drawHaloText([foyer.id, people, minutes].filter(Boolean).join(" · "), x + 9, y, {
       font: "600 12px Inter, sans-serif",
       color: "#111",
     });
@@ -2473,18 +2502,21 @@ function drawVentes() {
     const half = big ? 6.5 : 4.5;
     ctx.beginPath();
     ctx.rect(x - half, y - half, half * 2, half * 2);
-    ctx.fillStyle = vente.id === app.tool.active ? "#2f9e1f" : "#6b3fa0";
+    // En voiture, les points de vente sans parking sont grisés (pas de calcul en voiture pour eux).
+    ctx.fillStyle = app.mode === "voiture" && !vente.parking ? "#b4b4b4" : vente.id === app.tool.active ? "#2f9e1f" : "#6b3fa0";
     ctx.fill();
     ctx.lineWidth = big ? 2.2 : 1.6;
     ctx.strokeStyle = "#fff";
     ctx.stroke();
     return [x, y];
   };
+  // Le point de vente choisi est dessiné par le marqueur carré du départ, avec son nom.
+  const own = (vente) => vente.id === app.tool.active;
   ventes.forEach((vente, i) => {
-    if (!shown(i)) square(vente, false);
+    if (!shown(i) && !own(vente)) square(vente, false);
   });
   ventes.forEach((vente, i) => {
-    if (!shown(i)) return;
+    if (!shown(i) || own(vente)) return;
     const drawn = square(vente, true);
     if (!drawn) return;
     const [x, y] = drawn;
@@ -2492,7 +2524,8 @@ function drawVentes() {
     const time = minutes === null || minutes === undefined ? null : Number.isFinite(minutes) ? formatMinutes(minutes) : "inaccessible";
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
-    drawHaloText([vente.id, vente.parking ? "parking" : null, time].filter(Boolean).join(" · "), x + 11, y, {
+    const parking = vente.parking ? "parking" : app.mode === "voiture" ? "sans parking" : null;
+    drawHaloText([vente.id, parking, time].filter(Boolean).join(" · "), x + 11, y, {
       font: "600 12px Inter, sans-serif",
       color: "#3d1f63",
     });

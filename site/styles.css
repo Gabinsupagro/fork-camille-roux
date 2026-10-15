@@ -484,6 +484,14 @@ h1 {
   font-size: 0.8rem;
 }
 
+.r5-info .r5-warning {
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #fff4dc;
+  color: #7a4b00;
+  font-size: 0.82rem;
+}
+
 .r5-info .r5-time {
   font-size: 1.6rem;
   font-weight: 800;
