@@ -107,7 +107,7 @@ const app = {
   // times : clé « id du point de vente|mode » → minutes vers chaque foyer (NaN : inaccessible).
   // grids : clé « id du point de vente|tc » → minutes vers chaque case de la carte (isochrones transports en commun).
   // live : minutes vers chaque foyer depuis le départ (ou l'arrivée) de la carte affichée, recalculées à chaque calcul.
-  // hover, selected : foyer survolé, foyers cliqués (indices dans foyers) : seuls ceux-là ont leur étiquette.
+  // hover, selected : lieu survolé, lieux cliqués (« f3 » : foyers[3], « v2 » : ventes[2]) : seuls ceux-là ont leur étiquette.
   tool: { foyers: [], ventes: [], report: [], times: new Map(), grids: new Map(), active: null, busy: false, targets: null,
           live: null, hover: null, selected: new Set() },
   heatVersion: 0, // augmente à chaque calcul de la carte : les temps des foyers sont alors à refaire
@@ -985,6 +985,7 @@ function render() {
   if (!(tilesShown && app.basemap.hasLabels)) drawCommuneNames();
   drawR5Points();
   drawFoyers();
+  drawVentes();
   drawStops();
   if (app.to) {
     let minutes = app.solution ? formatMinutes(travelTo(app.solution, app.to.point).minutes) : null;
@@ -1380,15 +1381,15 @@ canvas.addEventListener("pointermove", (event) => {
   const drag = app.drag;
 
   if (!drag) {
-    const foyer = event.pointerType === "mouse" && !markerAt(screen) ? foyerAt(screen) : null;
+    const place = event.pointerType === "mouse" && !markerAt(screen) ? placeAt(screen) : null;
     canvas.classList.toggle("over-marker", Boolean(markerAt(screen)));
-    canvas.classList.toggle("over-foyer", foyer !== null);
-    setHoverFoyer(foyer);
-    if (event.pointerType === "mouse") setHoverStop(foyer === null ? stopAt(screen) : null);
+    canvas.classList.toggle("over-foyer", place !== null);
+    setHoverPlace(place);
+    if (event.pointerType === "mouse") setHoverStop(place === null ? stopAt(screen) : null);
     return;
   }
   setHoverStop(null);
-  setHoverFoyer(null);
+  setHoverPlace(null);
   if (drag.kind === "pinch" && app.pointers.size === 2) {
     const [a, b] = [...app.pointers.values()];
     const distance = hypot(a, b);
@@ -1415,15 +1416,15 @@ function setHoverStop(index) {
   requestRender();
 }
 
-function setHoverFoyer(index) {
-  if (index === app.tool.hover) return;
-  app.tool.hover = index;
+function setHoverPlace(key) {
+  if (key === app.tool.hover) return;
+  app.tool.hover = key;
   requestRender();
 }
 
 canvas.addEventListener("pointerleave", () => {
   setHoverStop(null);
-  setHoverFoyer(null);
+  setHoverPlace(null);
 });
 
 function endPointer(event) {
@@ -1438,10 +1439,10 @@ function endPointer(event) {
   canvas.classList.remove("panning");
   if (event.type === "pointercancel") return;
   if (drag.kind === "pan" && !drag.moved) {
-    // Un clic sur un foyer affiche (ou retire) son étiquette, sans poser d'arrivée.
-    const foyer = foyerAt(eventPoint(event), pointerKind(event));
-    if (foyer !== null) {
-      if (!app.tool.selected.delete(foyer)) app.tool.selected.add(foyer);
+    // Un clic sur un foyer ou un point de vente affiche (ou retire) son étiquette, sans poser d'arrivée.
+    const place = placeAt(eventPoint(event), pointerKind(event));
+    if (place !== null) {
+      if (!app.tool.selected.delete(place)) app.tool.selected.add(place);
       requestRender();
       return;
     }
@@ -2159,9 +2160,11 @@ async function importPlaces(file, kind) {
     if (kind === "foyers") {
       app.tool.targets = null;
       app.tool.live = null;
-      app.tool.hover = null;
-      app.tool.selected.clear();
     }
+    // Les indices changent : étiquettes affichées de ce fichier retirées.
+    const prefix = kind === "foyers" ? "f" : "v";
+    app.tool.hover = null;
+    for (const key of [...app.tool.selected]) if (key.startsWith(prefix)) app.tool.selected.delete(key);
     app.tool.grids.clear();
     const label = kind === "foyers" ? "foyers" : "points de vente";
     app.tool.report = [
@@ -2338,14 +2341,18 @@ function foyerTimes() {
   if (tool) return tool;
   const key = `${app.heatVersion}|${app.mode}|${foyers.length}`;
   if (app.tool.live?.key === key) return app.tool.live.times;
-  let at;
-  if (app.r5.active) at = (point) => r5TimeAt(point);
-  else if (app.mode !== "tc") at = app.heatRoad ? (point) => app.roads.minutesTo(app.heatRoad, point) : null;
-  else at = app.heatSolution ? (point) => travelTo(app.heatSolution, point).minutes : null;
+  const at = heatMinutesFn();
   if (!at) return null;
   const times = Float32Array.from(foyers, (foyer) => at(foyer.point) ?? NaN);
   app.tool.live = { key, times };
   return times;
+}
+
+/** Minutes vers un point quelconque pour la carte affichée (même calcul qu'elle), ou null si rien n'est calculé. */
+function heatMinutesFn() {
+  if (app.r5.active) return (point) => r5TimeAt(point);
+  if (app.mode !== "tc") return app.heatRoad ? (point) => app.roads.minutesTo(app.heatRoad, point) : null;
+  return app.heatSolution ? (point) => travelTo(app.heatSolution, point).minutes : null;
 }
 
 function updateToolPanel() {
@@ -2384,32 +2391,35 @@ function updateToolPanel() {
         "r5-source",
       );
     } else {
-      line("Même calcul que la carte, refait à chaque déplacement du point. Survolez ou cliquez un foyer pour son étiquette.", "r5-source");
+      line("Même calcul que la carte, refait à chaque déplacement du point. Survolez ou cliquez un foyer ou un point de vente pour son étiquette.", "r5-source");
     }
   }
   info.replaceChildren(...parts);
 }
 
-/** Foyer sous le pointeur (indice), ou null. */
-function foyerAt(screen, kind = "mouse") {
+/** Point de vente (« v2 ») ou foyer (« f3 ») sous le pointeur, ou null ; les points de vente d'abord (dessinés dessus). */
+function placeAt(screen, kind = "mouse") {
   const radius = kind === "mouse" ? 8 : 14;
-  let best = null;
-  let bestDistance = radius;
-  app.tool.foyers.forEach((foyer, i) => {
-    const distance = hypot(screen, project(foyer.point));
-    if (distance < bestDistance) {
-      best = i;
-      bestDistance = distance;
-    }
-  });
-  return best;
+  for (const [prefix, list] of [["v", app.tool.ventes], ["f", app.tool.foyers]]) {
+    let best = null;
+    let bestDistance = radius;
+    list.forEach((place, i) => {
+      const distance = hypot(screen, project(place.point));
+      if (distance < bestDistance) {
+        best = `${prefix}${i}`;
+        bestDistance = distance;
+      }
+    });
+    if (best !== null) return best;
+  }
+  return null;
 }
 
 function drawFoyers() {
   const { foyers, hover, selected } = app.tool;
   if (!foyers.length) return;
   const times = foyerTimes();
-  const shown = (i) => i === hover || selected.has(i);
+  const shown = (i) => hover === `f${i}` || selected.has(`f${i}`);
   const dot = (foyer, i, big) => {
     const [x, y] = project(foyer.point);
     if (x < -20 || y < -20 || x > app.size.width + 20 || y > app.size.height + 20) return null;
@@ -2441,6 +2451,44 @@ function drawFoyers() {
     drawHaloText([foyer.id, people, minutes].filter(Boolean).join(" · "), x + 10, y, {
       font: "600 12px Inter, sans-serif",
       color: "#111",
+    });
+  });
+}
+
+/** Points de vente : petits carrés violets, toujours affichés ; étiquette au survol ou au clic (nom, parking, temps). */
+function drawVentes() {
+  const { ventes, hover, selected } = app.tool;
+  if (!ventes.length) return;
+  const at = heatMinutesFn();
+  const shown = (i) => hover === `v${i}` || selected.has(`v${i}`);
+  const square = (vente, big) => {
+    const [x, y] = project(vente.point);
+    if (x < -20 || y < -20 || x > app.size.width + 20 || y > app.size.height + 20) return null;
+    const half = big ? 6.5 : 4.5;
+    ctx.beginPath();
+    ctx.rect(x - half, y - half, half * 2, half * 2);
+    ctx.fillStyle = vente.id === app.tool.active ? "#2f9e1f" : "#6b3fa0";
+    ctx.fill();
+    ctx.lineWidth = big ? 2.2 : 1.6;
+    ctx.strokeStyle = "#fff";
+    ctx.stroke();
+    return [x, y];
+  };
+  ventes.forEach((vente, i) => {
+    if (!shown(i)) square(vente, false);
+  });
+  ventes.forEach((vente, i) => {
+    if (!shown(i)) return;
+    const drawn = square(vente, true);
+    if (!drawn) return;
+    const [x, y] = drawn;
+    const minutes = vente.id === app.tool.active && heatSource() === app.from ? null : at?.(vente.point);
+    const time = minutes === null || minutes === undefined ? null : Number.isFinite(minutes) ? formatMinutes(minutes) : "inaccessible";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    drawHaloText([vente.id, vente.parking ? "parking" : null, time].filter(Boolean).join(" · "), x + 11, y, {
+      font: "600 12px Inter, sans-serif",
+      color: "#3d1f63",
     });
   });
 }
