@@ -106,7 +106,12 @@ const app = {
   // Données importées par l'utilisateur (lues dans le navigateur, jamais envoyées) et temps calculés :
   // times : clé « id du point de vente|mode » → minutes vers chaque foyer (NaN : inaccessible).
   // grids : clé « id du point de vente|tc » → minutes vers chaque case de la carte (isochrones transports en commun).
-  tool: { foyers: [], ventes: [], report: [], times: new Map(), grids: new Map(), active: null, busy: false, targets: null },
+  // live : minutes vers chaque foyer depuis le départ (ou l'arrivée) de la carte affichée, recalculées à chaque calcul.
+  // hover, selected : foyer survolé, foyers cliqués (indices dans foyers) : seuls ceux-là ont leur étiquette.
+  tool: { foyers: [], ventes: [], report: [], times: new Map(), grids: new Map(), active: null, busy: false, targets: null,
+          live: null, hover: null, selected: new Set() },
+  heatVersion: 0, // augmente à chaque calcul de la carte : les temps des foyers sont alors à refaire
+  heatRoad: null, // calcul voiture ou vélo d'où vient la carte (départ, ou arrivée prise à rebours)
   transit: null, // horaires et calcul transports en commun (transit.js), chargés au premier calcul
   drag: null,
   pointers: new Map(),
@@ -1057,6 +1062,8 @@ function heatSource() {
 }
 
 function recompute({ fast = false } = {}) {
+  app.heatVersion += 1;
+  app.heatRoad = null;
   if (app.r5.active) {
     // La carte vient de la grille r5py de la référence : rien à recalculer.
     app.grid = app.r5.grid;
@@ -1090,6 +1097,7 @@ function recompute({ fast = false } = {}) {
     app.roadSolution = app.roads.solve(app.mode, app.from.point, options);
     // Carte depuis l'arrivée : temps de chaque lieu vers l'arrivée (sens uniques pris à rebours).
     const heat = heatSource() === app.from ? app.roadSolution : app.roads.solve(app.mode, app.to.point, { ...options, reverse: true });
+    app.heatRoad = heat;
     app.grid = roadGrid(app.roads.cellMinutes(heat));
     paintHeat(app.grid, { fast });
     updatePanel();
@@ -1146,8 +1154,9 @@ function setHeatFrom(source) {
 
 function updatePanel() {
   $("tripFrom").textContent = app.from?.label ?? "—";
-  $("r5Info").hidden = !app.r5.active && !app.tool.active;
-  if (app.tool.active && !app.r5.active) updateToolPanel(); // comptes de foyers, sous l'itinéraire habituel
+  const foyersShown = Boolean(app.tool.active || app.tool.foyers.length);
+  $("r5Info").hidden = !app.r5.active && !foyersShown;
+  if (foyersShown && !app.r5.active) updateToolPanel(); // comptes de foyers, sous l'itinéraire habituel
   if (app.r5.active) {
     updateR5Panel();
     return;
@@ -1371,11 +1380,15 @@ canvas.addEventListener("pointermove", (event) => {
   const drag = app.drag;
 
   if (!drag) {
+    const foyer = event.pointerType === "mouse" && !markerAt(screen) ? foyerAt(screen) : null;
     canvas.classList.toggle("over-marker", Boolean(markerAt(screen)));
-    if (event.pointerType === "mouse") setHoverStop(stopAt(screen));
+    canvas.classList.toggle("over-foyer", foyer !== null);
+    setHoverFoyer(foyer);
+    if (event.pointerType === "mouse") setHoverStop(foyer === null ? stopAt(screen) : null);
     return;
   }
   setHoverStop(null);
+  setHoverFoyer(null);
   if (drag.kind === "pinch" && app.pointers.size === 2) {
     const [a, b] = [...app.pointers.values()];
     const distance = hypot(a, b);
@@ -1402,7 +1415,16 @@ function setHoverStop(index) {
   requestRender();
 }
 
-canvas.addEventListener("pointerleave", () => setHoverStop(null));
+function setHoverFoyer(index) {
+  if (index === app.tool.hover) return;
+  app.tool.hover = index;
+  requestRender();
+}
+
+canvas.addEventListener("pointerleave", () => {
+  setHoverStop(null);
+  setHoverFoyer(null);
+});
 
 function endPointer(event) {
   app.pointers.delete(event.pointerId);
@@ -1416,6 +1438,13 @@ function endPointer(event) {
   canvas.classList.remove("panning");
   if (event.type === "pointercancel") return;
   if (drag.kind === "pan" && !drag.moved) {
+    // Un clic sur un foyer affiche (ou retire) son étiquette, sans poser d'arrivée.
+    const foyer = foyerAt(eventPoint(event), pointerKind(event));
+    if (foyer !== null) {
+      if (!app.tool.selected.delete(foyer)) app.tool.selected.add(foyer);
+      requestRender();
+      return;
+    }
     if (!setTo(unproject(...eventPoint(event)))) toast("Ce point est hors de la Métropole ou sur l'eau.");
   } else if (drag.kind === "marker") {
     recompute();
@@ -1824,7 +1853,7 @@ $("busToggle").addEventListener("change", (event) => {
 
 function isochronesChanged() {
   app.isochrones = [...$("isoToggles").querySelectorAll("input[type=checkbox]:checked")].map((input) => Number(input.value));
-  if (app.r5.active || app.tool.active) updatePanel(); // comptes de foyers par isochrone
+  if (app.r5.active || app.tool.active || app.tool.foyers.length) updatePanel(); // comptes de foyers par isochrone
   requestRender();
   syncUrl();
 }
@@ -2122,7 +2151,12 @@ async function importPlaces(file, kind) {
     toast(`Lecture de ${file.name}…`, 30000);
     const { places, report } = await readPlaces(file, kind);
     app.tool[kind] = places;
-    if (kind === "foyers") app.tool.targets = null;
+    if (kind === "foyers") {
+      app.tool.targets = null;
+      app.tool.live = null;
+      app.tool.hover = null;
+      app.tool.selected.clear();
+    }
     app.tool.grids.clear();
     const label = kind === "foyers" ? "foyers" : "points de vente";
     app.tool.report = [...app.tool.report.filter((row) => row.fichier !== (kind === "foyers" ? "foyer" : "point de vente")), ...report];
@@ -2131,6 +2165,9 @@ async function importPlaces(file, kind) {
     const missing = report.length - places.length;
     const placed = `${places.length} ${label} placés${missing ? `, ${missing} non trouvés (voir « Contrôle des adresses »)` : ""}.`;
     fillVenteSelect();
+    // Les foyers s'affichent tout de suite, comptés dans les isochrones de la carte en cours.
+    updatePanel();
+    requestRender();
     if (app.tool.foyers.length && app.tool.ventes.length) {
       toast(placed, 4000);
       await runTool();
@@ -2232,6 +2269,28 @@ function toolCountsList(times, thresholds) {
   return list;
 }
 
+/**
+ * Minutes vers chaque foyer (NaN : inaccessible) pour la carte affichée. Point de vente choisi, carte partant de lui :
+ * le calcul porte à porte (celui du récapitulatif). Sinon : depuis le départ vert (ou l'arrivée, si la carte part
+ * d'elle), refait à chaque déplacement, avec le même calcul que la carte.
+ */
+function foyerTimes() {
+  const { foyers } = app.tool;
+  if (!foyers.length) return null;
+  const tool = heatSource() === app.from ? toolTimes() : null;
+  if (tool) return tool;
+  const key = `${app.heatVersion}|${app.mode}|${foyers.length}`;
+  if (app.tool.live?.key === key) return app.tool.live.times;
+  let at;
+  if (app.r5.active) at = (point) => r5TimeAt(point);
+  else if (app.mode !== "tc") at = app.heatRoad ? (point) => app.roads.minutesTo(app.heatRoad, point) : null;
+  else at = app.heatSolution ? (point) => travelTo(app.heatSolution, point).minutes : null;
+  if (!at) return null;
+  const times = Float32Array.from(foyers, (foyer) => at(foyer.point) ?? NaN);
+  app.tool.live = { key, times };
+  return times;
+}
+
 function updateToolPanel() {
   const info = $("r5Info");
   info.hidden = false;
@@ -2243,54 +2302,89 @@ function updateToolPanel() {
     parts.push(p);
   };
   const vente = app.tool.ventes.find((item) => item.id === app.tool.active);
-  const times = toolTimes();
-  line(`${R5_MODES[app.mode]} · calcul dans la page`, "trip-eyebrow");
+  const doorToDoor = Boolean(vente && heatSource() === app.from);
+  const times = doorToDoor ? toolTimes() : foyerTimes();
+  line(
+    vente ? `${R5_MODES[app.mode]} · calcul dans la page` : `${R5_MODES[app.mode]} · ${app.tool.foyers.length} foyers importés`,
+    "trip-eyebrow",
+  );
   if (!times) {
     line(
-      app.mode === "voiture" && !vente?.parking
+      doorToDoor && app.mode === "voiture" && !vente.parking
         ? "Pas de calcul en voiture pour ce point de vente : il n'a pas de parking (colonne parking)."
         : "Calcul en cours…",
       "r5-source",
     );
   } else {
     const thresholds = app.isochrones.length ? [...app.isochrones].sort((a, b) => a - b) : [app.maxMinutes];
-    line("Foyers dans l'isochrone", "trip-eyebrow");
+    line(heatSource() === app.from ? "Foyers dans l'isochrone du départ" : "Foyers dans l'isochrone de l'arrivée", "trip-eyebrow");
     parts.push(toolCountsList(times, thresholds));
-    line(
-      app.mode === "tc"
-        ? "Marche par les rues et horaires TaM, médiane des départs de 7 h à 20 h (méthode de r5py)."
-        : `${ROAD_MODES[app.mode].label} : ${ROAD_MODES[app.mode].describe}.`,
-      "r5-source",
-    );
+    if (doorToDoor) {
+      line(
+        app.mode === "tc"
+          ? "Marche par les rues et horaires TaM, médiane des départs de 7 h à 20 h (méthode de r5py)."
+          : `${ROAD_MODES[app.mode].label} : ${ROAD_MODES[app.mode].describe}.`,
+        "r5-source",
+      );
+    } else {
+      line("Même calcul que la carte, refait à chaque déplacement du point. Survolez ou cliquez un foyer pour son étiquette.", "r5-source");
+    }
   }
   info.replaceChildren(...parts);
 }
 
-function drawFoyers() {
-  const times = toolTimes();
-  if (!times) return;
-  const labels = app.view.scale > STOP_LABEL_SCALE;
+/** Foyer sous le pointeur (indice), ou null. */
+function foyerAt(screen, kind = "mouse") {
+  const radius = kind === "mouse" ? 8 : 14;
+  let best = null;
+  let bestDistance = radius;
   app.tool.foyers.forEach((foyer, i) => {
+    const distance = hypot(screen, project(foyer.point));
+    if (distance < bestDistance) {
+      best = i;
+      bestDistance = distance;
+    }
+  });
+  return best;
+}
+
+function drawFoyers() {
+  const { foyers, hover, selected } = app.tool;
+  if (!foyers.length) return;
+  const times = foyerTimes();
+  const shown = (i) => i === hover || selected.has(i);
+  const dot = (foyer, i, big) => {
     const [x, y] = project(foyer.point);
-    if (x < -20 || y < -20 || x > app.size.width + 20 || y > app.size.height + 20) return;
-    const time = times[i];
+    if (x < -20 || y < -20 || x > app.size.width + 20 || y > app.size.height + 20) return null;
+    const time = times ? times[i] : NaN;
     const inside = time <= app.maxMinutes;
     const [r, g, b] = inside ? paletteColor(time / app.maxMinutes) : [150, 150, 150];
     ctx.beginPath();
-    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.arc(x, y, big ? 7 : 5, 0, Math.PI * 2);
     ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
     ctx.fill();
-    ctx.lineWidth = 1.6;
+    ctx.lineWidth = big ? 2.2 : 1.6;
     ctx.strokeStyle = "#111";
     ctx.stroke();
-    if (labels) {
-      ctx.textAlign = "left";
-      ctx.textBaseline = "middle";
-      drawHaloText(Number.isNaN(time) ? foyer.id : `${foyer.id} · ${formatMinutes(time)}`, x + 8, y, {
-        font: "600 11px Inter, sans-serif",
-        color: "#111",
-      });
-    }
+    return [x, y, time];
+  };
+  foyers.forEach((foyer, i) => {
+    if (!shown(i)) dot(foyer, i, false);
+  });
+  // Foyers survolés ou cliqués : par-dessus les autres, avec leur étiquette.
+  foyers.forEach((foyer, i) => {
+    if (!shown(i)) return;
+    const drawn = dot(foyer, i, true);
+    if (!drawn) return;
+    const [x, y, time] = drawn;
+    const people = `${foyer.personnes.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} pers.`;
+    const minutes = times ? (Number.isFinite(time) ? formatMinutes(time) : "inaccessible") : null;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    drawHaloText([foyer.id, people, minutes].filter(Boolean).join(" · "), x + 10, y, {
+      font: "600 12px Inter, sans-serif",
+      color: "#111",
+    });
   });
 }
 

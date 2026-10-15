@@ -276,6 +276,10 @@ h1 {
   cursor: grab;
 }
 
+#mapCanvas.over-foyer {
+  cursor: pointer;
+}
+
 .noscript {
   margin: 0;
   padding: 16px 18px;
