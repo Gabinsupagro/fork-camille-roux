@@ -1613,138 +1613,15 @@ function r5PointTime(point) {
   return r5TimeAt(point.point);
 }
 
-/** Grille compressée par r5_isochrones.py (« u8-zlib-base64 » ou « u16le-zlib-base64 ») → temps par case, -1 = sans temps.
-    Décompression par le navigateur lui-même (DecompressionStream), sans bibliothèque ni requête. */
-async function decodeMinutes(raw) {
-  const packed = Uint8Array.from(atob(raw.minutesZ), (char) => char.charCodeAt(0));
-  const stream = new Blob([packed]).stream().pipeThrough(new DecompressionStream("deflate"));
-  const bytes = new DataView(await new Response(stream).arrayBuffer());
-  const wide = raw.codage.startsWith("u16");
-  const count = bytes.byteLength / (wide ? 2 : 1);
-  const minutes = new Int32Array(count);
-  for (let i = 0; i < count; i += 1) {
-    const value = wide ? bytes.getUint16(2 * i, true) : bytes.getUint8(i);
-    minutes[i] = value === raw.vide ? -1 : value;
-  }
-  return minutes;
-}
-
-async function loadR5Files(files) {
-  let grids = 0;
-  const notes = [];
-  for (const file of files) {
-    const text = await file.text();
-    if (file.name.toLowerCase().endsWith(".json")) {
-      let raw;
-      try {
-        raw = JSON.parse(text);
-      } catch {
-        notes.push(`${file.name} : JSON illisible`);
-        continue;
-      }
-      if (!(Array.isArray(raw.minutes) || typeof raw.minutesZ === "string") || !raw.colonnes || !raw.rangs || !raw.pas || !raw.origine) {
-        notes.push(`${file.name} : pas une grille r5py`);
-        continue;
-      }
-      if (raw.minutesZ) {
-        try {
-          raw.minutes = await decodeMinutes(raw);
-        } catch (error) {
-          notes.push(`${file.name} : grille compressée illisible (${error.message})`);
-          continue;
-        }
-      }
-      if (raw.minutes.length !== raw.colonnes * raw.rangs) {
-        notes.push(`${file.name} : grille incomplète`);
-        continue;
-      }
-      if (Math.abs(raw.lat0 - app.data.meta.lat0) > 1e-9) {
-        notes.push(`${file.name} : repère différent de la carte`);
-        continue;
-      }
-      // Grilles d'avant le mode voiture : sans champ « mode », ce sont des grilles marche + transports en commun.
-      raw.mode = raw.mode ?? "tc";
-      const reference = String(raw.reference);
-      app.r5.grids.set(`${reference}|${raw.mode}`, raw);
-      const known = app.r5.refs.get(reference) ?? { adresse: raw.adresse, lat: raw.lat, lon: raw.lon, modes: new Set() };
-      known.modes.add(raw.mode);
-      app.r5.refs.set(reference, known);
-      grids += 1;
-      continue;
-    }
-    const rows = parseCsv(text);
-    const columns = new Set(Object.keys(rows[0] ?? {}));
-    if (columns.has("fichier") && columns.has("lat")) {
-      // geocodage.csv : les points de la base (fichier « pt ») placés par le géocodage.
-      app.r5.points = rows
-        .filter((row) => row.fichier === "pt" && row.lat && row.lon)
-        .map((row) => ({
-          id: row.id,
-          label: row.adresse || row.id,
-          point: toWorld(Number(row.lat), Number(row.lon)),
-          // Colonne personnes (nb_personne de points.csv : personnes du foyer) ; absente des anciens fichiers.
-          personnes: row.personnes === undefined || row.personnes === "" ? null : Number(row.personnes.replace(",", ".")),
-        }));
-      notes.push(`${app.r5.points.length} foyers`);
-    } else if (columns.has("reference") && columns.has("point") && columns.has("minutes")) {
-      app.r5.matrix = new Map(
-        // Colonne « mode » absente (matrice d'avant le mode voiture) : marche + transports en commun.
-        rows.map((row) => [`${row.reference}|${row.mode || "tc"}|${row.point}`, row.minutes === "" ? null : Number(row.minutes)]),
-      );
-      notes.push("matrice");
-    } else {
-      notes.push(`${file.name} : fichier non reconnu`);
-    }
-  }
-  if (grids) notes.unshift(`${grids} grille${grids > 1 ? "s" : ""}`);
-  else if (!app.r5.grids.size) notes.push("aucune grille : ajoutez les fichiers .json de sortie/grilles (ou choisissez le dossier sortie)");
-  fillR5Select();
-  if (!app.r5.active && app.r5.refs.size) activateR5(app.r5.refs.keys().next().value);
-  else if (app.r5.active) {
-    updatePanel();
-    requestRender();
-  }
-  toast(`Chargé : ${notes.join(", ") || "rien"}`, 7000);
-}
-
-function fillR5Select() {
-  const select = $("r5Reference");
-  const options = [new Option("Carte du site (sans r5py)", "")];
-  for (const [id, ref] of app.r5.refs) {
-    const name = ref.adresse && ref.adresse !== id ? `${id} · ${ref.adresse}` : id;
-    options.push(new Option(ref.modes.has("voiture") ? `${name} · parking` : name, id));
-  }
-  select.replaceChildren(...options);
-  select.value = app.r5.active ?? "";
-  select.hidden = !app.r5.refs.size;
-}
-
 /** Recalcule la grille affichée pour la référence et le mode choisis (aucune en voiture sans parking). */
 function refreshR5Grid() {
   const raw = r5CurrentGrid();
   app.r5.grid = raw ? r5Grid(raw) : null;
 }
 
-function activateR5(id) {
-  const ref = app.r5.refs.get(id);
-  if (!ref) return;
-  if (app.tool.active) leaveTool();
-  app.r5.active = id;
-  refreshR5Grid();
-  app.from = { point: toWorld(ref.lat, ref.lon), label: ref.adresse || id };
-  app.to = null;
-  app.solution = null;
-  app.heatSolution = null;
-  app.heatFrom = "from";
-  $("r5Reference").value = id;
-  recompute();
-  syncUrl();
-}
-
 function leaveR5() {
   app.r5.active = null;
   app.r5.grid = null;
-  $("r5Reference").value = "";
 }
 
 function updateR5Panel() {
@@ -1841,32 +1718,6 @@ function drawR5Points() {
   }
 }
 
-/** Dans un dossier sortie/ choisi en entier, seuls les résultats sont lus (pas l'extrait OSM ni le GTFS en cache). */
-function isR5Result(file) {
-  const path = (file.webkitRelativePath || file.name).replaceAll("\\", "/").toLowerCase();
-  const name = path.split("/").pop();
-  return (name.endsWith(".json") && path.includes("grilles/")) || name === "geocodage.csv" || name === "matrice.csv";
-}
-
-for (const id of ["r5Files", "r5Folder"]) {
-  $(id).addEventListener("change", async (event) => {
-    const all = [...event.target.files];
-    const files = id === "r5Folder" ? all.filter(isR5Result) : all;
-    event.target.value = ""; // pour pouvoir recharger les mêmes fichiers
-    if (!files.length) {
-      toast(all.length ? "Aucun résultat r5py dans ce dossier (grilles/*.json, geocodage.csv, matrice.csv)." : "Aucun fichier reçu.", 7000);
-      return;
-    }
-    toast(`Lecture de ${files.length} fichier${files.length > 1 ? "s" : ""}…`);
-    try {
-      await loadR5Files(files);
-    } catch (error) {
-      console.error(error);
-      toast(`Lecture impossible : ${error.message}`, 7000);
-    }
-  });
-}
-
 function setModeControls(mode) {
   app.mode = mode;
   $("modeSelect").value = mode;
@@ -1882,16 +1733,6 @@ $("modeSelect").addEventListener("change", (event) => {
   recompute();
   noParkingNotice();
   syncUrl();
-});
-
-$("r5Reference").addEventListener("change", (event) => {
-  if (event.target.value) {
-    activateR5(event.target.value);
-  } else {
-    leaveR5();
-    recompute();
-    syncUrl();
-  }
 });
 
 // --- Commandes ----------------------------------------------------------------

@@ -755,6 +755,18 @@ output {
   flex-basis: 100%;
 }
 
+/* Exports et sauvegarde : à part, sous les réglages de la carte. */
+.output-group {
+  flex-basis: 100%;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+
+.output-group .button {
+  padding: 5px 10px;
+  font-size: 0.85rem;
+}
+
 .data-group .button {
   padding: 6px 12px;
   font-size: 0.9rem;

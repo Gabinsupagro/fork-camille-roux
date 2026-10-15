@@ -156,17 +156,12 @@ Résultats dans `sortie/` (non versionné) :
   isochrone de la carte (5, 15, 30 et 60 min ; `--isochrones 10,20,45` pour d'autres valeurs), le nombre de foyers et de personnes dedans ; une ligne vide
   avec une remarque quand un mode n'est pas calculé (voiture sans parking) ;
 - `isochrones.geojson` : isochrones par référence et par seuil (QGIS) ;
-- `grilles/<id>.json` : temps par case de 50 m, dans le repère de la carte du site, pour l'afficher ; compressés sans
-  perte (un octet par case, zlib, base64 : environ 50 Ko au lieu de 1,3 Mo), la carte lit aussi l'ancien format.
+- `grilles/<id>.json` : temps par case de 50 m, dans le repère de la carte du site ; compressés sans perte (un
+  octet par case, zlib, base64 : environ 50 Ko au lieu de 1,3 Mo).
 
-Pour les voir sur la carte, lancez le site en local (`python -m http.server 8000 --directory site`), puis
-« Résultats r5py › Dossier sortie… » et choisissez le dossier `sortie` : la page y lit les grilles,
-`geocodage.csv` et `matrice.csv` (et rien d'autre). « Fichiers… » permet aussi de les choisir un à un, en
-plusieurs fois si besoin : les chargements s'additionnent. Les fichiers sont lus par le navigateur et ne sont
-envoyés nulle part. La liste qui apparaît
-choisit l'adresse de référence : la carte affiche alors sa heatmap et ses isochrones r5py, les points colorés
-selon leur temps, et le nombre de points sous chaque isochrone cochée. Un clic sur la carte donne le temps porte
-à porte depuis la référence ; déplacer le départ, ou choisir « Carte du site », revient au calcul habituel.
+La page ne lit plus ces résultats (bouton « Résultats r5py » retiré) : elle fait elle-même les calculs porte à
+porte à partir des foyers et des points de vente importés (voir plus haut). Les fichiers de `sortie/` s'ouvrent
+dans un tableur ou dans QGIS.
 
 **Voiture.** Dans `references.csv`, une colonne `parking` (`oui`/`non`) et une colonne `type` (`petit ou moyen
 commerce`, `marché` ou `grande surface`). Pour chaque référence avec parking, le script calcule aussi les temps en
