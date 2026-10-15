@@ -22,14 +22,17 @@ Ouvrir la page (en local : voir « Lancer » ; en ligne : l'adresse GitHub Pages
 1. « Foyers… » : un CSV des foyers (identifiant `name` ou `id`, adresse `result_label`, `Adresses` ou `adresse`, ou
    `Latitude` et `Longitude`, et `nb_personne`, 1 par défaut) ;
 2. « Points de vente… » : un CSV des points de vente (mêmes colonnes, plus `type` et `parking` oui/non) ;
-3. la page place les adresses (index local de la Base Adresse Nationale), calcule les temps de chaque foyer vers
-   chaque point de vente (marche + transports en commun, vélo, et voiture s'il y a un parking ; en transports en
-   commun, un calcul par foyer, quelques dixièmes de seconde chacun ; en vélo et en voiture, un calcul à rebours par
-   point de vente ; les isochrones dessinées partent du point de vente), puis propose la liste des
+3. la page place les adresses (index local de la Base Adresse Nationale), calcule les temps de chaque point de vente
+   vers chaque foyer (marche + transports en commun, vélo, et voiture s'il y a un parking), puis propose la liste des
    points de vente : la carte montre ses isochrones et les foyers, le panneau les foyers et personnes dans chaque
    isochrone ;
-4. « Récapitulatif (CSV) » : le tableau foyers et personnes par point de vente, mode et isochrone cochée (5, 15, 30,
-   60 min, et toute valeur ajoutée avec « Autre », de 1 à 90 min) ; « Contrôle des adresses » : comment chaque adresse a été placée (et celles non trouvées).
+4. « Récap. points de vente (CSV) », au départ des points de vente : le tableau foyers et personnes par point de
+   vente, mode et isochrone cochée (5, 15, 30, 60 min, et toute valeur ajoutée avec « Autre », de 1 à 90 min) ;
+   « Récap. foyers (CSV) », au départ des foyers : pour chaque foyer, mode et isochrone, le nombre et la liste des
+   points de vente atteints (en voiture, ceux qui ont un parking) et le plus proche. Ce sens est calculé à la demande :
+   en transports en commun, un calcul par foyer (quelques dixièmes de seconde chacun, gardés en mémoire) ; en vélo et
+   en voiture, un calcul à rebours par point de vente. Avec les horaires, l'aller et le retour peuvent différer d'une
+   ou deux minutes ; « Contrôle des adresses » : comment chaque adresse a été placée (et celles non trouvées).
 
 Rien ne quitte le navigateur : les fichiers sont lus sur place, et une règle de sécurité de la page
 (Content-Security-Policy) lui interdit de contacter un autre site que celui des tuiles du fond de carte (qui ne voit
