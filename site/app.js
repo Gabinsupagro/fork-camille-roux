@@ -1441,6 +1441,12 @@ function endPointer(event) {
   if (drag.kind === "pan" && !drag.moved) {
     // Un clic sur un foyer ou un point de vente affiche (ou retire) son étiquette, sans poser d'arrivée.
     const place = placeAt(eventPoint(event), pointerKind(event));
+    if (place?.startsWith("v")) {
+      // Point de vente : choisi dans le menu (carte et comptes depuis lui), étiquette gardée.
+      app.tool.selected.add(place);
+      activateVente(app.tool.ventes[Number(place.slice(1))].id);
+      return;
+    }
     if (place !== null) {
       if (!app.tool.selected.delete(place)) app.tool.selected.add(place);
       requestRender();
@@ -2242,13 +2248,13 @@ async function addVente(name, address, parking) {
 function fillVenteSelect() {
   const select = $("venteSelect");
   const ready = app.tool.ventes.length && app.tool.foyers.length && app.tool.times.size;
-  // Un point de vente ajouté à la main se choisit dans la liste même sans foyers (isochrones seules).
+  // Sans foyers, un point de vente se choisit quand même (isochrones seules).
   select.replaceChildren(
     new Option("Choisir un point de vente…", ""),
     ...app.tool.ventes.map((vente) => new Option(vente.parking ? `${vente.id} · parking` : vente.id, vente.id)),
   );
   select.value = app.tool.active ?? "";
-  select.hidden = !(ready || app.tool.ventes.some((vente) => vente.manual));
+  select.hidden = !app.tool.ventes.length;
   $("exportRecap").hidden = !ready;
   $("exportCheck").hidden = !app.tool.report.length;
 }
