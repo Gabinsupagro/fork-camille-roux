@@ -1099,7 +1099,17 @@ function recompute({ fast = false } = {}) {
     requestRender();
     return;
   }
-  if (app.tool.focus !== null && app.mode === "tc" && !fast) ensureFocusCalc();
+  if (app.tool.focus !== null && app.mode === "tc" && !app.r5.active && heatSource() === app.from) {
+    // Foyer choisi, calcul porte à porte pas encore fait : carte vide en attendant (pas d'isochrones d'un autre calcul).
+    app.solution = solveFrom(app.from.point);
+    app.heatSolution = null;
+    app.roadSolution = null;
+    app.grid = null;
+    updatePanel();
+    requestRender();
+    if (!fast) ensureFocusCalc();
+    return;
+  }
   const toolGrid =
     app.tool.active && app.mode === "tc" && heatSource() === app.from ? app.tool.grids.get(`${app.tool.active}|tc`) : null;
   if (toolGrid) {
