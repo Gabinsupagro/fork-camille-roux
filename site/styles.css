@@ -484,6 +484,25 @@ h1 {
   font-size: 0.8rem;
 }
 
+.focus-ventes ol {
+  margin: 2px 0 0;
+  padding-left: 18px;
+  max-height: 160px;
+  overflow-y: auto;
+  font-size: 0.82rem;
+  font-weight: 400;
+}
+
+.focus-ventes > li > span {
+  flex-shrink: 0;
+}
+
+.focus-ventes ol li {
+  display: list-item;
+  padding: 0;
+  border: 0;
+}
+
 .r5-info .r5-warning {
   padding: 6px 8px;
   border-radius: 8px;
