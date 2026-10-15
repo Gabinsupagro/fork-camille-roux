@@ -1449,8 +1449,9 @@ function endPointer(event) {
     // Un clic sur un foyer ou un point de vente affiche (ou retire) son étiquette, sans poser d'arrivée.
     const place = placeAt(eventPoint(event), pointerKind(event));
     if (place?.startsWith("v")) {
-      // Point de vente : choisi dans le menu (carte et comptes depuis lui), étiquette gardée.
-      app.tool.selected.add(place);
+      // Point de vente : choisi dans le menu (carte et comptes depuis lui) ; il devient le carré vert du départ,
+      // et les autres reprennent leur taille normale.
+      for (const key of [...app.tool.selected]) if (key.startsWith("v")) app.tool.selected.delete(key);
       activateVente(app.tool.ventes[Number(place.slice(1))].id);
       return;
     }
