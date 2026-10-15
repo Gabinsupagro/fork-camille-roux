@@ -1322,7 +1322,8 @@ function syncUrl() {
   if (app.maxMinutes !== DEFAULT_MAX) params.set("max", String(app.maxMinutes));
   const iso = [...app.isochrones].sort((a, b) => a - b).join(",");
   if (iso !== DEFAULT_ISOCHRONES.join(",")) params.set("iso", iso || "0");
-  if (!app.showNetwork) params.set("lignes", "0");
+  // Lignes et arrêts : affichés par défaut en transports en commun, masqués en vélo et en voiture.
+  if (app.showNetwork !== networkDefault(app.mode)) params.set("lignes", app.showNetwork ? "1" : "0");
   if (!app.showBasemap) params.set("fond", "0");
   else if (app.provider !== DEFAULT_PROVIDER) params.set("fond", app.provider);
   if (app.heatOpacity !== null) params.set("opacite", String(Math.round(app.heatOpacity * 100)));
@@ -1354,7 +1355,8 @@ function restoreFromUrl() {
   const opacity = Number(params.get("opacite"));
   if (params.has("opacite") && opacity >= 0 && opacity <= 100) app.heatOpacity = opacity / 100;
   $("basemapToggle").checked = app.showBasemap;
-  app.showNetwork = params.get("lignes") !== "0";
+  const lines = params.get("lignes");
+  app.showNetwork = lines === "1" || (lines !== "0" && networkDefault(["velo", "voiture"].includes(params.get("mode")) ? params.get("mode") : "tc"));
   $("networkToggle").checked = app.showNetwork;
   syncOpacityControl();
   updateLegend();
@@ -1718,6 +1720,8 @@ function drawR5Points() {
   }
 }
 
+const networkDefault = (mode) => mode === "tc";
+
 function setModeControls(mode) {
   app.mode = mode;
   $("modeSelect").value = mode;
@@ -1729,6 +1733,10 @@ function setModeControls(mode) {
 
 $("modeSelect").addEventListener("change", (event) => {
   setModeControls(event.target.value);
+  // Lignes et arrêts : remis à leur réglage par défaut du mode (on peut toujours les réafficher).
+  app.showNetwork = networkDefault(app.mode);
+  $("networkToggle").checked = app.showNetwork;
+  app.hoverStop = null;
   if (app.r5.active) refreshR5Grid();
   recompute();
   noParkingNotice();
